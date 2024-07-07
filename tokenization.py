@@ -10,6 +10,8 @@ from IndicTransTokenizer import IndicTransTokenizer, IndicProcessor
 import os
 import json
 import signal
+import fsspec
+from fsspec import AbstractFileSystem
 
 
 def parse_args():
@@ -18,15 +20,23 @@ def parse_args():
 
     parser.add_argument("--name", default="HuggingFaceFW/fineweb-edu")
 
-    parser.add_argument("--subset", type=str, required=True)
+    parser.add_argument("--subset", type=str, required=True, help='subset of the dataset')
 
-    parser.add_argument("--streaming", default=True, type=bool, required=False)
+    parser.add_argument("--streaming", default=True, type=bool, required=False, help='whether to stream or download the dataset')
 
-    parser.add_argument("--src_lang", type=str, required=True)
+    parser.add_argument("--src_lang", type=str, required=True, help='source language (i.e) the language of the dataset')
 
-    parser.add_argument("--tgt_lang", type=str, required=True)
+    parser.add_argument("--tgt_lang", type=str, required=True, help='target language')
 
-    parser.add_argument("--tokenization_batch_size", type=int, required=True)
+    parser.add_argument("--tokenization_batch_size", type=int, required=True, help='batch size to perform tokenization')
+
+    parser.add_argument("--bucket", type=str, required=True, help='gcs bucket to store the shards')
+
+    parser.add_argument("--rows_per_shard", type=int, default=1000, required=False, help='no of rows per shard')
+
+    parser.add_argument("--shard_size", type=int,default=64000, required=False, help='sharding based on no of sentences')
+
+    parser.add_argument("--resume",type=bool , required=False, default=False)
 
     args = parser.parse_args()
 
@@ -106,7 +116,7 @@ def split_with_delimiter(
             out = [lines[i]+lines[i+1] for i in iter_range] + [lines[-1]]
         return out 
 
-def split_into_sentences(text,method="regex"):
+def split_into_sentences(text, method="regex"):
         split_methods = {
             "regex": split_with_delimiter,
         }
@@ -126,40 +136,100 @@ def preprocess_and_tokenize(tokenizer, ip, batch, src_lang, tgt_lang):
     return {"batch":batch, "placeholder_entity_maps":placeholder_entity_maps}
 
 
+def _main(sentences, temp_ids, src_lang, tgt_lang, tokenization_batch_size, name, subset, bucket, shard, fs, row):
 
-if __name__ == '__main__':
+    tokenized_inputs = []
+    ids = []
+
+    assert len(sentences) == len(temp_ids)
+
+    ip = IndicProcessor(inference=True)
+    tokenizer = IndicTransTokenizer(direction='en-indic')
     
-    args = parse_args()
+    for i in range(0, len(sentences), tokenization_batch_size):
+        try:    
+            tokenized_inputs.append(preprocess_and_tokenize(tokenizer, ip, sentences[i : i + tokenization_batch_size], src_lang, tgt_lang))
+            ids.append(temp_ids[i : i + tokenization_batch_size])
+        except TimeoutError as e:
+            ip.get_placeholder_entity_maps(clear_ple_maps=True)
+            print(e)
+    
+    assert len(tokenized_inputs)  == len(ids)
+
+    data = {'tokenized_inputs':tokenized_inputs, "ids":ids, "row": row, "shard":shard}
+
+    with fs.open(f'{bucket}/{name}/{subset}/{shard}/data.json' ,'w') as f:
+        json.dump(data, f)
+
+
+def main(args):
 
     name = args.name
     subset = args.subset
     src_lang = args.src_lang
     tgt_lang = args.tgt_lang
     streaming = args.streaming
-    tokenzation_batch_size = args.tokenization_batch_size
+    tokenization_batch_size = args.tokenization_batch_size
+    rows_per_shard = args.rows_per_shard
+    bucket = args.bucket
+    shard_size = args.shard_size
+    resume = args.resume
 
     data = load_data(name, subset, streaming)
 
     sentences = []
+    temp_ids = []
 
-    for d in data:
-        sentences.extend(split_into_sentences(d['text']))
+    row = 0
+    shard = 1
+    tokenized_rows = 0
+    tokenized_shards = 0
+
+    fs : AbstractFileSystem = fsspec.core.url_to_fs(bucket)[0]
+
+    if resume:
+        files = fs.ls(f'{bucket}/{name}/{subset}')
+        max_shard = 0
+
+        for file in files:
+            shard_no = int(file.split('/')[-1])
+            if shard_no > max_shard:
+                max_shard = shard_no
+
+        with fs.open(f'{bucket}/{name}/{subset}/{max_shard}/data.json') as f:
+            _data = json.load(f)
+
+        tokenized_rows =_data['row']
+        tokenized_shards = _data['shard']
+
+    if tokenized_shards!=0:
+        print(file)
+        print("tokenized rows", tokenized_rows)
+        shard = tokenized_shards + 1
+        print("tokenized shards", tokenized_shards)        
     
-    del data
+    for d in data:
+        if row < (tokenized_rows-1):
+            row += 1
+            continue
+        sents = split_into_sentences(d['text'])
+        temp_ids.extend([d['id']] * len(sents))
+        sentences.extend(sents)
+        row += 1
+        if len(sentences) >= shard_size:
+            # print(len(sentences))
+            # l = len(sentences) % shard_size
+            _main(sentences[: shard_size], temp_ids[: shard_size], src_lang, tgt_lang, tokenization_batch_size, name, subset, bucket, shard, fs, row)
+            # del sentences[ : shard_size ]
+            sentences = sentences[shard_size : ]
+            temp_ids = temp_ids[shard_size : ]
+            # print(l)
+            # print(len(sentences))
+            shard += 1
 
-    tokenized_inputs = []
 
-    ip = IndicProcessor(inference=True)
-    tokenizer = IndicTransTokenizer(direction='en-indic')
+if __name__ == '__main__':
+    
+    args = parse_args()
 
-    count = 1
-    for i in range(0, len(sentences), tokenzation_batch_size):
-        try:    
-            tokenized_inputs.append(preprocess_and_tokenize(tokenizer, ip, sentences[i : i + tokenzation_batch_size], src_lang, tgt_lang))
-        except TimeoutError as e:
-            ip.get_placeholder_entity_maps(clear_ple_maps=True)
-            print(e)
-        count += 1
-
-    with open(f'{subset}.json','w') as f:
-        json.dump(tokenized_inputs,f)
+    main(args)

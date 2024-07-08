@@ -119,7 +119,7 @@ def split_into_sentences(text, method="regex"):
 def preprocess_and_tokenize(tokenizer, ip, batch, src_lang, tgt_lang):
     
     batch = ip.preprocess_batch(batch, src_lang=src_lang, tgt_lang=tgt_lang)
-    batch = tokenizer(batch, padding="longest", truncation=True, max_length=512,src=True, return_tensors="pt",return_attention_mask=True)
+    batch = tokenizer(batch, padding="longest", truncation=True, max_length=256,src=True, return_tensors="pt",return_attention_mask=True)
     batch = {key: value.tolist() for key, value in batch.items()}
     placeholder_entity_maps = ip.get_placeholder_entity_maps(clear_ple_maps=True)
     return {"batch":batch, "placeholder_entity_maps":placeholder_entity_maps}

@@ -219,5 +219,7 @@ if __name__ =='__main__':
 
         with fs.open(f'{bucket}/{name}/{subset}/{i}/output.json', 'w') as f:
             json.dump(output, f)
+            
+        del model, params
 
     

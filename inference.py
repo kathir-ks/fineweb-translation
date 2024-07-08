@@ -191,24 +191,33 @@ if __name__ =='__main__':
         os.system("mkdir flax_weights")
         os.system(f'gsutil cp -R gs://indic-llama-data/indic-llama/flax_weights/200m {curr_dir}/flax_weights/')
 
-    model = FlaxIndicTransForConditionalGeneration.from_pretrained(
+    # model = FlaxIndicTransForConditionalGeneration.from_pretrained(
+    #         model_path, 
+    #         local_files_only=True,
+    #         dtype=jnp.float16,
+    #     )
+    
+    curr_shard = 1
+    files = fs.ls(f'{bucket}/{name}/{subset}')
+    total_shards = len(files)
+
+    for i in range(curr_shard, total_shards + 1, 1):
+        
+        model = FlaxIndicTransForConditionalGeneration.from_pretrained(
             model_path, 
             local_files_only=True,
             dtype=jnp.float16,
         )
-        
-    print("model loaded!")
+        print("model loaded!")
+        params = replicate(model.params)
+        print("model replicated!")
 
-    params = replicate(model.params)
+        with fs.open(f'{bucket}/{name}/{subset}/{i}/data.json', 'r') as f:
+            data = json.load(f)
 
-    print("model replicated!")
+        output = main(model, params, data, batch_size)
 
-    with fs.open(f'{bucket}/{name}/{subset}/2/data.json', 'r') as f:
-        data = json.load(f)
-
-    output = main(model, params, data, batch_size)
-
-    with fs.open(f'{bucket}/{name}/{subset}/2/output.json', 'w') as f:
-        json.dump(output, f)
+        with fs.open(f'{bucket}/{name}/{subset}/{i}/output.json', 'w') as f:
+            json.dump(output, f)
 
     

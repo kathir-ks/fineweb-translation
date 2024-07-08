@@ -17,29 +17,18 @@ from fsspec import AbstractFileSystem
 def parse_args():
 
     parser = argparse.ArgumentParser(description="Performs preprocessing and tokenization for fineweb")
-
     parser.add_argument("--name", default="HuggingFaceFW/fineweb-edu")
-
     parser.add_argument("--subset", type=str, required=True, help='subset of the dataset')
-
     parser.add_argument("--streaming", default=True, type=bool, required=False, help='whether to stream or download the dataset')
-
     parser.add_argument("--src_lang", type=str, required=True, help='source language (i.e) the language of the dataset')
-
     parser.add_argument("--tgt_lang", type=str, required=True, help='target language')
-
     parser.add_argument("--tokenization_batch_size", type=int, required=True, help='batch size to perform tokenization')
-
     parser.add_argument("--bucket", type=str, required=True, help='gcs bucket to store the shards')
-
     parser.add_argument("--rows_per_shard", type=int, default=1000, required=False, help='no of rows per shard')
-
     parser.add_argument("--shard_size", type=int,default=64000, required=False, help='sharding based on no of sentences')
-
     parser.add_argument("--resume",type=bool , required=False, default=False)
 
     args = parser.parse_args()
-
     return args
 
 
@@ -130,10 +119,11 @@ def split_into_sentences(text, method="regex"):
 def preprocess_and_tokenize(tokenizer, ip, batch, src_lang, tgt_lang):
     
     batch = ip.preprocess_batch(batch, src_lang=src_lang, tgt_lang=tgt_lang)
-    batch = tokenizer(batch, padding="longest", truncation=True, max_length=256,src=True, return_tensors="pt",return_attention_mask=True)
+    batch = tokenizer(batch, padding="longest", truncation=True, max_length=512,src=True, return_tensors="pt",return_attention_mask=True)
     batch = {key: value.tolist() for key, value in batch.items()}
     placeholder_entity_maps = ip.get_placeholder_entity_maps(clear_ple_maps=True)
     return {"batch":batch, "placeholder_entity_maps":placeholder_entity_maps}
+
 
 
 def _main(sentences, temp_ids, src_lang, tgt_lang, tokenization_batch_size, name, subset, bucket, shard, fs, row):
@@ -202,7 +192,7 @@ def main(args):
         tokenized_rows =_data['row']
         tokenized_shards = _data['shard']
 
-    if tokenized_shards!=0:
+    if tokenized_shards != 0:
         print(file)
         print("tokenized rows", tokenized_rows)
         shard = tokenized_shards + 1
@@ -217,14 +207,9 @@ def main(args):
         sentences.extend(sents)
         row += 1
         if len(sentences) >= shard_size:
-            # print(len(sentences))
-            # l = len(sentences) % shard_size
             _main(sentences[: shard_size], temp_ids[: shard_size], src_lang, tgt_lang, tokenization_batch_size, name, subset, bucket, shard, fs, row)
-            # del sentences[ : shard_size ]
             sentences = sentences[shard_size : ]
             temp_ids = temp_ids[shard_size : ]
-            # print(l)
-            # print(len(sentences))
             shard += 1
 
 
@@ -233,3 +218,4 @@ if __name__ == '__main__':
     args = parse_args()
 
     main(args)
+    

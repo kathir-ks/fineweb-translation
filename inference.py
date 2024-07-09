@@ -184,6 +184,13 @@ if __name__ =='__main__':
 
     fs : AbstractFileSystem = fsspec.core.url_to_fs(bucket)[0]
 
+    pid = jax.process_index()
+
+    global_devices = jax.device_count()
+    local_devices = jax.local_device_count()
+
+    global_devices /= local_devices
+
     curr_dir = os.getcwd()
     model_path = f'{curr_dir}/flax_weights/200m'
     
@@ -191,26 +198,39 @@ if __name__ =='__main__':
         os.system("mkdir flax_weights")
         os.system(f'gsutil cp -R gs://indic-llama-data/indic-llama/flax_weights/200m {curr_dir}/flax_weights/')
 
-    # model = FlaxIndicTransForConditionalGeneration.from_pretrained(
-    #         model_path, 
-    #         local_files_only=True,
-    #         dtype=jnp.float16,
-    #     )
-    
-    curr_shard = 1
+    curr_shard = 1 + pid
+
     files = fs.ls(f'{bucket}/{name}/{subset}')
+
+    # binary search to find the file from which the inference should resume
+    left = 1
+    right = len(files)
     total_shards = len(files)
 
-    for i in range(curr_shard, total_shards + 1, 1):
+    while( left <= right ):
+        mid = left + int((right - left) / 2 )
+        if fs.isfile(f'{bucket}/{name}/{subset}/{mid}/output.json'):
+            left = mid + 1
+        else:
+            right = mid - 1
+
+    curr_shard = left + pid
+
+    if pid == 0:
+        print("starting from shard ",curr_shard)
+
+    for i in range(curr_shard, total_shards + 1, global_devices):
         
-        model = FlaxIndicTransForConditionalGeneration.from_pretrained(
-            model_path, 
-            local_files_only=True,
-            dtype=jnp.float16,
-        )
+        model = FlaxIndicTransForConditionalGeneration.from_pretrained(model_path, local_files_only=True,dtype=jnp.float16,)
         print("model loaded!")
         params = replicate(model.params)
         print("model replicated!")
+
+        if fs.isfile(f'{bucket}/{name}/{subset}/{i}/output.json'):
+            continue
+
+        if not fs.isfile(f'{bucket}/{name}/{subset}/{i}/data.json'):
+            continue
 
         with fs.open(f'{bucket}/{name}/{subset}/{i}/data.json', 'r') as f:
             data = json.load(f)

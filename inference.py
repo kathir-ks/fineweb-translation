@@ -213,15 +213,12 @@ if __name__ =='__main__':
     files = fs.ls(f'{bucket}/{name}/{subset}')
 
     # binary search to find the file from which the inference should resume
-    left = 1
     total_shards = len(files)
 
     for i in range(1, total_shards, 1):
-        if fs.isfile(f'{bucket}/{name}/{subset}/{i}/data.json'):
+        if fs.isfile(f'{bucket}/{name}/{subset}/{i}/output.json'):
             curr_shard = i + 1
-            continue
         else:
-            curr_shard = i
             break
     
     curr_shard = curr_shard + pid

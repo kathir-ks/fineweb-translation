@@ -197,9 +197,9 @@ if __name__ =='__main__':
     global_devices = jax.device_count()
     local_devices = jax.local_device_count()
 
-    global_devices = int(global_devices / local_devices)
+    process_count = jax.process_count()
 
-    print(global_devices)
+    # print(global_devices)
     
     curr_dir = os.getcwd()
     model_path = f'{curr_dir}/flax_weights/200m'
@@ -209,13 +209,10 @@ if __name__ =='__main__':
         os.system(f'gsutil cp -R gs://indic-llama-data/indic-llama/flax_weights/200m {curr_dir}/flax_weights/')
 
     curr_shard = 1
-
     files = fs.ls(f'{bucket}/{name}/{subset}')
-
-    # binary search to find the file from which the inference should resume
     total_shards = len(files)
 
-    for i in range(1, total_shards, 1):
+    for i in range(1, total_shards + 1, 1):
         if fs.isfile(f'{bucket}/{name}/{subset}/{i}/output.json'):
             curr_shard = i + 1
         else:
@@ -225,7 +222,7 @@ if __name__ =='__main__':
     
     print("starting from shard ",curr_shard)
 
-    for i in range(curr_shard, total_shards + 1, global_devices):
+    for i in range(curr_shard, total_shards + 1, process_count):
         
         model = FlaxIndicTransForConditionalGeneration.from_pretrained(model_path, local_files_only=True,dtype=jnp.float16,)
         print("model loaded!")

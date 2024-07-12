@@ -136,8 +136,7 @@ def main(model, params, data, batch_size):
     # no need to jit the generate function because in jax by default pmapped functions are jitted!
 
     def run_inference_step(batch, params, run_ds):
-        
-        output = None
+
         try:
             input_batch = {
                 "input_ids": shard(jnp.array(batch["input_ids"])),
@@ -149,10 +148,12 @@ def main(model, params, data, batch_size):
                 output = output.reshape(-1, *output.shape[2:])
             else:
                 output = output[0]
+
+            return output
+        
         except:
             print("!Error in inference step")
-
-        return output
+            return []
 
     outputs = []
     _placeholder_entity_maps = []
@@ -160,7 +161,7 @@ def main(model, params, data, batch_size):
 
     for input, placeholder_entity_map, id in zip(inputs, placeholder_entity_maps, ids):
         output = run_inference_step(input, params, None)
-        if output is not None:
+        if len(output) > 0:
             outputs.append(output.tolist())
             _placeholder_entity_maps.append(placeholder_entity_map)
             _ids.append(id)
@@ -171,7 +172,7 @@ def main(model, params, data, batch_size):
     print("Inference completed!")
     print(time.time() - t)
     
-    return {'outputs' : outputs, 'placeholder_entity_maps' : placeholder_entity_maps, 'ids' : ids, 'row' : row, 'shard': _shard}
+    return {'outputs' : outputs, 'placeholder_entity_maps' : _placeholder_entity_maps, 'ids' : _ids, 'row' : row, 'shard': _shard}
 
 if __name__ =='__main__':
 

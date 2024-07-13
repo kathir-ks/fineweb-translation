@@ -4,6 +4,6 @@ pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_
 pip install torch transformers datasets flax nltk fsspec gcsfs
 sudo apt-get install golang -y
 pip install jax-smi
-pip install flax nltk
+pip install flax 
 
 mkdir flax_weights

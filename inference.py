@@ -46,7 +46,7 @@ def padding_fn(
 
             padding_length = max(len_list)
 
-            if padding_length > 256:
+            if padding_length > 260:
                 
                 print(padding_length)
 
@@ -127,7 +127,7 @@ def main(model, params, data, batch_size):
                 **batch,
                 num_beams=1,
                 num_return_sequences=1,
-                max_length=256,
+                max_length=260,
                 do_sample=False,
             ).sequences
 

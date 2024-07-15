@@ -183,12 +183,16 @@ if __name__ =='__main__':
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
     parser.add_argument("--tokenization_batch_size", type=int, default=64, required=False)
     parser.add_argument("--bucket", type=str, required=True)
-    
+    parser.add_argument("--node_id", type=int, default=-1)
+    parser.add_argument("--total_nodes", type=int, default=-1)
+
     args = parser.parse_args()
     name = args.name
     subset = args.subset
     batch_size = args.batch_size
     bucket = args.bucket
+    node_id = args.node_id
+    total_nodes = args.total_nodes
 
     fs : AbstractFileSystem = fsspec.core.url_to_fs(bucket)[0]
 
@@ -223,6 +227,10 @@ if __name__ =='__main__':
     curr_shard = curr_shard + pid
     
     print("starting from shard ",curr_shard)
+
+    if node_id != -1 and total_nodes !=-1:
+        curr_shard = node_id
+        process_count = total_nodes
 
     for i in range(curr_shard, total_shards + 1, process_count):
         

@@ -127,7 +127,7 @@ def main(model, params, data, batch_size):
                 **batch,
                 num_beams=1,
                 num_return_sequences=1,
-                max_length=260,
+                max_length=256,
                 do_sample=False,
             ).sequences
 
@@ -151,8 +151,9 @@ def main(model, params, data, batch_size):
 
             return output
         
-        except:
-            print("!Error in inference step")
+        except Exception as e:
+
+            print(f"!Error in inference step: {e}")
             return []
 
     outputs = []

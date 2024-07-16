@@ -197,12 +197,9 @@ if __name__ =='__main__':
     fs : AbstractFileSystem = fsspec.core.url_to_fs(bucket)[0]
 
     pid = jax.process_index()
-
     print(pid)
-
     global_devices = jax.device_count()
     local_devices = jax.local_device_count()
-
     process_count = jax.process_count()
 
     # print(global_devices)
@@ -218,11 +215,11 @@ if __name__ =='__main__':
     files = fs.ls(f'{bucket}/{name}/{subset}')
     total_shards = len(files)
 
-    for i in range(1, total_shards + 1, 1):
-        if fs.isfile(f'{bucket}/{name}/{subset}/{i}/output.json'):
-            curr_shard = i + 1
-        else:
-            break
+    # for i in range(1, total_shards + 1, 1):
+    #     if fs.isfile(f'{bucket}/{name}/{subset}/{i}/output.json'):
+    #         curr_shard = i + 1
+    #     else:
+    #         break
     
     curr_shard = curr_shard + pid
     
@@ -233,11 +230,6 @@ if __name__ =='__main__':
         process_count = total_nodes
 
     for i in range(curr_shard, total_shards + 1, process_count):
-        
-        model = FlaxIndicTransForConditionalGeneration.from_pretrained(model_path, local_files_only=True,dtype=jnp.float16,)
-        print("model loaded!")
-        params = replicate(model.params)
-        print("model replicated!")
 
         if fs.isfile(f'{bucket}/{name}/{subset}/{i}/output.json'):
             continue
@@ -248,6 +240,11 @@ if __name__ =='__main__':
 
         with fs.open(f'{bucket}/{name}/{subset}/{i}/data.json', 'r') as f:
             data = json.load(f)
+
+        model = FlaxIndicTransForConditionalGeneration.from_pretrained(model_path, local_files_only=True,dtype=jnp.float16,)
+        print("model loaded!")
+        params = replicate(model.params)
+        print("model replicated!")
 
         output = main(model, params, data, batch_size)
 

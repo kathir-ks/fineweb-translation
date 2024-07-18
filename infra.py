@@ -75,3 +75,27 @@ while i < l + 1:
         i += 32
     
 print("inference completed")
+
+
+
+
+
+
+
+output = subprocess.check_output(
+                ['gcloud', 'compute', 'tpus', 'tpu-vm', 'ssh', f'main-{node_id}', '--zone=us-central2-b', '--tunnel-through-iap',
+                  f'--command=\'cd finweb-tranlation'],
+                stderr=subprocess.STDOUT,  # Redirect stderr to stdout
+                universal_newlines=True
+            )
+
+
+import subprocess
+
+node_id = 10
+
+subprocess.run(f'''gcloud alpha compute tpus tpu-vm ssh main-{node_id} --zone=us-central2-b --tunnel-through-iap 
+                  --command=\'git clone https://github.com/kathir-ks/fineweb-translation;
+                  cd fineweb-translation;
+                  chmod +x setup_inference_env.sh;
+                  ./setup_inference_env.sh\'''', shell=True)

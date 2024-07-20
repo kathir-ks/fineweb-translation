@@ -24,6 +24,33 @@ def decode(data , ip : IndicProcessor, tokenizer : IndicTransTokenizer, lang : s
 
     return {'sentences': sentences, 'ids':ids, 'row':row, 'shard':shard}
 
+def merge(_sentences, _ids, row, shard):
+    sentences = []
+    for sentence in _sentences:
+        sentences.extend(sentence)
+    
+    ids = []
+    for id in _ids:
+        ids.extend(id)
+
+    assert len(sentences) == len(ids)
+
+    uuid = []
+    text = []
+    prev_uuid = -1
+    for sentence, id in zip(sentences, ids):
+        if id == prev_uuid:
+            text[-1].append(sentence)
+        else:
+            prev_uuid = id
+            text.append([sentence])
+            uuid.append(id)
+
+    assert len(text) == len(uuid)
+
+    return {'text':text, 'uuid':uuid, 'row':row, 'shard':shard}
+    
+
 if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description="Decode the output tokens to the desired language using indictranstokenizer")
@@ -33,6 +60,8 @@ if __name__ == '__main__':
     parser.add_argument("--lang", type=str, required=True, help='the target lanaguage')  # the IndicTransTokenizer only needs the target language
     parser.add_argument("--bucket", type=str, required=True, help='the gcs bucket in which the data is present')
     parser.add_argument("--resume", type=bool, default=False, required=False)
+    parser.add_argument("--_from",type=int)
+    parser.add_argument("--to", type=int)
 
     args = parser.parse_args()
 
@@ -42,7 +71,8 @@ if __name__ == '__main__':
     lang = args.lang
     bucket = args.bucket
     resume = args.resume
-
+    _from = args._from
+    to = args.to
     fs : AbstractFileSystem = fsspec.core.url_to_fs(bucket)[0]
 
     files = fs.ls(f'{bucket}/{name}/{subset}')
@@ -69,16 +99,28 @@ if __name__ == '__main__':
     ip = IndicProcessor(inference=True)
     tokenizer = IndicTransTokenizer(direction=direction)
 
-    for i in range(curr_shard, total_shards + 1, 1):
+    if to > total_shards:
+        to = total_shards
+     
+    for i in range(_from, to + 1, 1):
 
         try:
             with fs.open(f'{bucket}/{name}/{subset}/{i}/output.json', 'r') as f:
                 output = json.load(f)
 
+            if len(output) == 0:
+                continue
+
             sentences = decode(output, ip, tokenizer, lang)
+
+            sentences = merge(sentences['sentences'], sentences['ids'],sentences['row'], sentences['shard'])
 
             with fs.open(f'{bucket}/{name}/{subset}/{i}/sentences.json', 'w') as f:
                 json.dump(sentences, f) 
+            
+            # empyt the output file
+            with fs.open(f'{bucket}/{name}/{subset}/{i}/output.json', 'w') as f:
+                json.dump([], f)
 
         except:
             print(f'The file {bucket}/{name}/{subset}/{i}/output.json is not available')

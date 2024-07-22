@@ -73,6 +73,7 @@ if __name__ == '__main__':
     resume = args.resume
     _from = args._from
     to = args.to
+    
     fs : AbstractFileSystem = fsspec.core.url_to_fs(bucket)[0]
 
     files = fs.ls(f'{bucket}/{name}/{subset}')

@@ -21,8 +21,11 @@ bucket = 'gs://indic-llama-data'
 
 fs : AbstractFileSystem = fsspec.core.url_to_fs(f'{bucket}')[0]
 
-dataset = []
+files_per_shard = 200
 
+file_count = 0
+dataset = []
+shard = 1
 for i in range(start, end+1, 1):
 
     data = {}
@@ -32,8 +35,18 @@ for i in range(start, end+1, 1):
             data['shard'] = i
             data['sentences'] = sentences
             dataset.append(data)
+            file_count += 1
+
+            if file_count % files_per_shard == 0:
+                dataset_to_upload = Dataset.from_list(dataset)
+                dataset_to_upload.push_to_hub(f'{subset}_{start}_{end}_shard_{shard}')
+                dataset = []
+                shard += 1
+
+if len(dataset) > 0:
+    dataset_to_upload = Dataset.from_list(dataset)
+    dataset_to_upload.push_to_hub(f'{subset}_{start}_{end}_shard_{shard}')
 
 
-dataset_to_upload = Dataset.from_list(dataset)
 
-dataset_to_upload.push_to_hub(f'{subset}_{start}_{end}')
+

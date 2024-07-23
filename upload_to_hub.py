@@ -26,15 +26,14 @@ files_per_shard = 200
 file_count = 0
 dataset = []
 shard = 1
-for i in range(start, end+1, 1):
 
-    data = {}
+for i in range(start, end + 1, 1):
+    
     if fs.isfile(f'{bucket}/{name}/{subset}/{i}/sentences.json'):
         with fs.open(f'{bucket}/{name}/{subset}/{i}/sentences.json', 'r') as f:
             sentences = json.load(f)
-            data['shard'] = i
-            data['sentences'] = sentences
-            dataset.append(data)
+            for i, j in zip(sentences['text'], sentences['uuid']):
+                dataset.append({'text':i, 'uuid':j})            
             file_count += 1
 
             if file_count % files_per_shard == 0:
@@ -45,7 +44,7 @@ for i in range(start, end+1, 1):
 
 if len(dataset) > 0:
     dataset_to_upload = Dataset.from_list(dataset)
-    dataset_to_upload.push_to_hub(f'{subset}_{start}_{end}_shard_{shard}')
+    dataset_to_upload.push_to_hub(f'{subset}_{start}_{end}_shard_{shard}_row_wise')
 
 
 

@@ -38,7 +38,7 @@ for i in range(start, end + 1, 1):
 
             if file_count % files_per_shard == 0:
                 dataset_to_upload = Dataset.from_list(dataset)
-                dataset_to_upload.push_to_hub(f'{subset}_{start}_{end}_shard_{shard}')
+                dataset_to_upload.push_to_hub(f'{subset}_{start}_{end}_shard_{shard}_row_wise')
                 dataset = []
                 shard += 1
 

@@ -5,6 +5,7 @@ pip install nltk sacremoses pandas regex mock "transformers>=4.33.2" mosestokeni
 pip install bitsandbytes scipy accelerate datasets
 pip install sentencepiece sacrebleu 
 pip instal fsspec gcsfs
+pip install -U "huggingface_hub[cli]"
 
 # Install IndicTransTokenizer
 # forked from https://github.com/VarunGumma/IndicTransTokenizer and the indicprocessor is modified according to 

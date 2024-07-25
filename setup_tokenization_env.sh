@@ -4,7 +4,7 @@
 pip install nltk sacremoses pandas regex mock "transformers>=4.33.2" mosestokenizer
 pip install bitsandbytes scipy accelerate datasets
 pip install sentencepiece sacrebleu 
-pip instal fsspec gcsfs
+pip install fsspec gcsfs
 pip install -U "huggingface_hub[cli]"
 
 # Install IndicTransTokenizer

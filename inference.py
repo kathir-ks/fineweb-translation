@@ -235,7 +235,7 @@ if __name__ =='__main__':
     ip = IndicProcessor(inference=True)
     tokenizer = IndicTransTokenizer(direction='en-indic')
 
-    for i in range(curr_shard, total_shards + 1, process_654hcount):
+    for i in range(curr_shard, total_shards + 1, process_count):
 
         if fs.isfile(f'{bucket}/{name}/{subset}/{i}/sentences.json'):
             continue

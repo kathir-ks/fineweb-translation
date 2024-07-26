@@ -16,4 +16,4 @@ git clone https://www.github.com/kathir-ks/IndicTransTokenizer
 cd IndicTransTokenizer
 pip install --editable ./
 
-sudo shutdown -r now
+# sudo shutdown -r now

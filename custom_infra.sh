@@ -39,12 +39,13 @@ while [ $i -lt $((l + 1)) ]; do
 
     while [[ $output != *"READY"* ]]; do
         gcloud compute tpus tpu-vm create "main-$node_id" --zone=$region --accelerator-type=$accelerator_type --version=tpu-ubuntu2204-base --preemptible
+        sleep 10
         gcloud compute tpus tpu-vm ssh "main-$node_id" --zone=$region --command='
             git clone https://github.com/kathir-ks/fineweb-translation;
             cd fineweb-translation;
             chmod +x setup_inference_env.sh;
             ./setup_inference_env.sh'
-        sleep 200j
+        sleep 20
         output=$(gcloud compute tpus tpu-vm describe "main-$node_id" --zone=$region 2>&1)
     done
 

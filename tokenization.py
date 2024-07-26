@@ -186,12 +186,12 @@ def main(args):
         #     shard_no = int(file.split('/')[-1])
         #     if shard_no > max_shard:
         #         max_shard = shard_no
+        if l!=0:
+            with fs.open(f'{bucket}/{name}/{subset}/{max_shard}/data.json') as f:
+                _data = json.load(f)
 
-        with fs.open(f'{bucket}/{name}/{subset}/{max_shard}/data.json') as f:
-            _data = json.load(f)
-
-        tokenized_rows =_data['row']
-        tokenized_shards = _data['shard']
+            tokenized_rows =_data['row']
+            tokenized_shards = _data['shard']
 
     if tokenized_shards != 0:
         # print(file)

@@ -10,7 +10,7 @@ from flax.jax_utils import replicate
 from flax.training.common_utils import shard
 from modeling_flax_indictrans import FlaxIndicTransForConditionalGeneration
 from jax_smi import initialise_tracking
-# from decode import decode, merge
+from decode import decode, merge
 
 import json
 import nltk
@@ -18,7 +18,7 @@ nltk.download('punkt')
 import time
 import fsspec
 from fsspec import AbstractFileSystem
-
+from IndicTransTokenizer import IndicTransTokenizer, IndicProcessor
 
 # start tracing
 initialise_tracking()
@@ -186,6 +186,7 @@ if __name__ =='__main__':
     parser.add_argument("--bucket", type=str, required=True)
     parser.add_argument("--node_id", type=int, default=-1)
     parser.add_argument("--total_nodes", type=int, default=-1)
+    parser.add_argument("--lang", type=str, required=True)
 
     args = parser.parse_args()
     name = args.name
@@ -194,6 +195,7 @@ if __name__ =='__main__':
     bucket = args.bucket
     node_id = args.node_id
     total_nodes = args.total_nodes
+    lang = args.lang
 
     fs : AbstractFileSystem = fsspec.core.url_to_fs(bucket)[0]
 
@@ -210,7 +212,7 @@ if __name__ =='__main__':
     
     if not os.path.isdir(model_path):
         os.system("mkdir flax_weights")
-        os.system(f'gsutil cp -R gs://indic-llama-data/indic-llama/flax_weights/200m {curr_dir}/flax_weights/')
+        os.system(f'gsutil cp -R {bucket}/IndicTrans2/flax_weights/200m {curr_dir}/flax_weights/')
 
     curr_shard = 1
     files = fs.ls(f'{bucket}/{name}/{subset}')
@@ -230,9 +232,12 @@ if __name__ =='__main__':
         curr_shard = node_id
         process_count = total_nodes
 
-    for i in range(curr_shard, total_shards + 1, process_count):
+    ip = IndicProcessor(inference=True)
+    tokenizer = IndicTransTokenizer(direction='en-indic')
 
-        if fs.isfile(f'{bucket}/{name}/{subset}/{i}/output.json'):
+    for i in range(curr_shard, total_shards + 1, process_654hcount):
+
+        if fs.isfile(f'{bucket}/{name}/{subset}/{i}/sentences.json'):
             continue
 
         if not fs.isfile(f'{bucket}/{name}/{subset}/{i}/data.json'):
@@ -249,9 +254,16 @@ if __name__ =='__main__':
 
         output = main(model, params, data, batch_size)
 
-        with fs.open(f'{bucket}/{name}/{subset}/{i}/output.json', 'w') as f:
-            json.dump(output, f)
+        sentences = decode(output, ip, tokenizer, lang)
+
+        sentences = merge(sentences['sentences'], sentences['ids'],sentences['row'], sentences['shard'])
+
+        with fs.open(f'{bucket}/{name}/{subset}/{i}/sentences.json', 'w') as f:
+            json.dump(sentences, f)
             
-        del model, params
+        with fs.open(f'{bucket}/{name}/{subset}/{i}/data.json', 'w') as f:
+            json.dump({'row':data['row'], 'shard':data['shard']}, f)
+
+        del model, params, data, sentences
 
     

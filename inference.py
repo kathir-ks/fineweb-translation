@@ -220,8 +220,8 @@ if __name__ =='__main__':
     for file in files:
         shards.append(int(file.split('/')[-1]))
     
-    curr_shard = min(files)
-    total_shards = max(files)
+    curr_shard = min(shards)
+    total_shards = max(shards)
 
     # for i in range(1, total_shards + 1, 1):
     #     if fs.isfile(f'{bucket}/{name}/{subset}/{i}/output.json'):

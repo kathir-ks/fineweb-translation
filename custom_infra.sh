@@ -31,7 +31,7 @@ i=$node_id
 while [ $i -lt $((l + 1)) ]; do
 
     # Check if output.json file exists
-    if gsutil -q stat "$bucket/$dataset/$subset/$i/output.json"; then
+    if gsutil -q stat "$bucket/$dataset/$subset/$i/sentences.json"; then
         i=$((i + total_nodes))
         continue
     fi
@@ -54,7 +54,7 @@ while [ $i -lt $((l + 1)) ]; do
         cd fineweb-translation;
         python3 inference.py --name $dataset --subset $subset --batch_size $batch_size --bucket $bucket --node_id $i --total_nodes $total_nodes --lang $lang"
     
-    if gsutil -q stat "$bucket/$dataset/$subset/$i/output.json"; then
+    if gsutil -q stat "$bucket/$dataset/$subset/$i/sentences.json"; then
         i=$((i + total_nodes))
     fi
 done

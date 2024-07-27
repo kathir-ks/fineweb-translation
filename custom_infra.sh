@@ -11,6 +11,7 @@ while [[ "$#" -gt 0 ]]; do
         --bucket) bucket="$2"; shift ;;
         --dataset) dataset="$2"; shift ;;
         --batch_size) batch_size="$2"; shift ;;
+        --lang) lang="$2"; shift ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
     shift
@@ -51,7 +52,7 @@ while [ $i -lt $((l + 1)) ]; do
 
     gcloud compute tpus tpu-vm ssh "main-$node_id" --zone=$region --command="
         cd fineweb-translation;
-        python3 inference.py --name $dataset --subset $subset --batch_size $batch_size --bucket $bucket --node_id $i --total_nodes $total_nodes"
+        python3 inference.py --name $dataset --subset $subset --batch_size $batch_size --bucket $bucket --node_id $i --total_nodes $total_nodes --lang $lang"
     
     if gsutil -q stat "$bucket/$dataset/$subset/$i/output.json"; then
         i=$((i + total_nodes))

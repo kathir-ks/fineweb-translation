@@ -179,13 +179,15 @@ def main(args):
     fs : AbstractFileSystem = fsspec.core.url_to_fs(bucket)[0]
 
     if resume:
-        files = fs.ls(f'{bucket}/{name}/{subset}')
-        l = len(files)
-        shards = []
-        for file in files:
-            shards.append(int(file.split('/')[-1]))
+        l = 0
+        if fs.isdir(f'{bucket}/{name}/{subset}'):
+            files = fs.ls(f'{bucket}/{name}/{subset}')
+            l = len(files)
+            shards = []
+            for file in files:
+                shards.append(int(file.split('/')[-1]))
 
-        max_shard = max(shards)
+            max_shard = max(shards)
 
         # for file in files:
         #     shard_no = int(file.split('/')[-1])

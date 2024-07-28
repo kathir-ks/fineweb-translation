@@ -180,12 +180,17 @@ def main(args):
     if resume:
         files = fs.ls(f'{bucket}/{name}/{subset}')
         l = len(files)
-        max_shard = l
+        shards = []
+        for file in files:
+            shards.append(int(file.split('/')[-1]))
+
+        max_shard = max(shards)
 
         # for file in files:
         #     shard_no = int(file.split('/')[-1])
         #     if shard_no > max_shard:
         #         max_shard = shard_no
+        
         if l!=0:
             with fs.open(f'{bucket}/{name}/{subset}/{max_shard}/data.json') as f:
                 _data = json.load(f)

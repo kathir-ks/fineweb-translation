@@ -91,7 +91,6 @@ def main(model, params, data, batch_size):
         attention_mask.extend(i['batch']['attention_mask'])
         _placeholder_entity_maps.extend(i['placeholder_entity_maps'])
 
-    del data
 
     assert len(_ids) == len(input_ids)
     assert len(input_ids) == len(attention_mask)
@@ -174,7 +173,7 @@ def main(model, params, data, batch_size):
     print("Inference completed!")
     print(time.time() - t)
     
-    return {'outputs' : outputs, 'placeholder_entity_maps' : _placeholder_entity_maps, 'ids' : _ids, 'row' : row, 'shard': _shard}
+    return {'outputs' : outputs, 'placeholder_entity_maps' : _placeholder_entity_maps, 'ids' : _ids,'meta_data': data['meta_data'] ,'row' : row, 'shard': _shard}
 
 if __name__ =='__main__':
 
@@ -261,7 +260,7 @@ if __name__ =='__main__':
 
         sentences = decode(output, ip, tokenizer, lang)
 
-        sentences = merge(sentences['sentences'], sentences['ids'],sentences['row'], sentences['shard'])
+        sentences = merge(sentences['sentences'], sentences['ids'],sentences['meta_data'], sentences['row'], sentences['shard'])
 
         with fs.open(f'{bucket}/{name}/{subset}/{i}/sentences.json', 'w') as f:
             json.dump(sentences, f)

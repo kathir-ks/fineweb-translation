@@ -69,7 +69,7 @@ def save_data_and_push_to_gcs(subset, shard, data, bucket):
     os.system(f'rm {subset}_{shard}.json')
 
 
-def load_data(name, subset,streaming, split="train"):
+def load_data(name, subset, streaming, split="train"):
     
     data =  load_dataset(name, subset, streaming=streaming, split=split)
     # data = data['text']
@@ -126,7 +126,7 @@ def preprocess_and_tokenize(tokenizer, ip, batch, src_lang, tgt_lang):
 
 
 
-def _main(sentences, temp_ids, src_lang, tgt_lang, tokenization_batch_size, name, subset, bucket, shard, fs, row):
+def _main(sentences, temp_ids, meta_data, src_lang, tgt_lang, tokenization_batch_size, name, subset, bucket, shard, fs, row):
 
     tokenized_inputs = []
     ids = []
@@ -146,7 +146,7 @@ def _main(sentences, temp_ids, src_lang, tgt_lang, tokenization_batch_size, name
     
     assert len(tokenized_inputs)  == len(ids)
 
-    data = {'tokenized_inputs':tokenized_inputs, "ids":ids, "row": row, "shard":shard}
+    data = {'tokenized_inputs':tokenized_inputs, "ids":ids, "row": row, "shard":shard, 'meta_data':meta_data}
 
     with fs.open(f'{bucket}/{name}/{subset}/{shard}/data.json' ,'w') as f:
         json.dump(data, f)
@@ -169,6 +169,7 @@ def main(args):
 
     sentences = []
     temp_ids = []
+    meta_data = []
 
     row = 0
     shard = 1
@@ -190,7 +191,7 @@ def main(args):
         #     shard_no = int(file.split('/')[-1])
         #     if shard_no > max_shard:
         #         max_shard = shard_no
-        
+
         if l!=0:
             with fs.open(f'{bucket}/{name}/{subset}/{max_shard}/data.json') as f:
                 _data = json.load(f)
@@ -210,12 +211,19 @@ def main(args):
             continue
         sents = split_into_sentences(d['text'])
         temp_ids.extend([d['id']] * len(sents))
+        meta_data.append({'id':d['id'], 'dump':d['dump'], 'url':d['url'],'file_path':d['file_path']})
         sentences.extend(sents)
         row += 1
         if len(sentences) >= shard_size:
-            _main(sentences[: shard_size], temp_ids[: shard_size], src_lang, tgt_lang, tokenization_batch_size, name, subset, bucket, shard, fs, row)
+            _main(sentences[: shard_size], temp_ids[: shard_size], meta_data, src_lang, tgt_lang, tokenization_batch_size, name, subset, bucket, shard, fs, row)
             sentences = sentences[shard_size : ]
             temp_ids = temp_ids[shard_size : ]
+            if len(temp_ids) > 0:
+                meta_data = [meta_data[-1]]
+            else:
+                meta_data = []
+            assert len(meta_data) == len(sentences)
+            assert len(meta_data) == len(temp_ids)
             shard += 1
 
 

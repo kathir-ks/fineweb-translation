@@ -22,9 +22,9 @@ def decode(data , ip : IndicProcessor, tokenizer : IndicTransTokenizer, lang : s
         output = ip.postprocess_batch(output, lang=lang, placeholder_entity_maps=placeholder_entity_map)
         sentences.append(output)
 
-    return {'sentences': sentences, 'ids':ids, 'row':row, 'shard':shard}
+    return {'sentences': sentences, 'ids':ids, 'row':row, 'shard':shard,'meta_data': data['meta_data']}
 
-def merge(_sentences, _ids, row, shard):
+def merge(_sentences, _ids,meta_data, row, shard):
     sentences = []
     for sentence in _sentences:
         sentences.extend(sentence)
@@ -47,8 +47,9 @@ def merge(_sentences, _ids, row, shard):
             uuid.append(id)
 
     assert len(text) == len(uuid)
-
-    return {'text':text, 'uuid':uuid, 'row':row, 'shard':shard}
+    assert len(meta_data) == len(text)
+    
+    return {'text':text, 'uuid':uuid, 'row':row, 'shard':shard, 'meta_data':meta_data}
     
 
 if __name__ == '__main__':
@@ -114,7 +115,7 @@ if __name__ == '__main__':
 
             sentences = decode(output, ip, tokenizer, lang)
 
-            sentences = merge(sentences['sentences'], sentences['ids'],sentences['row'], sentences['shard'])
+            sentences = merge(sentences['sentences'], sentences['ids'],sentences['meta_data'] , sentences['row'], sentences['shard'])
 
             with fs.open(f'{bucket}/{name}/{subset}/{i}/sentences.json', 'w') as f:
                 json.dump(sentences, f) 

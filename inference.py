@@ -176,7 +176,7 @@ def main(model, params, data, batch_size):
     meta_data = []
     if 'meta_data' in data.keys():
         meta_data = data['meta_data']
-        
+
     return {'outputs' : outputs, 'placeholder_entity_maps' : _placeholder_entity_maps, 'ids' : _ids,'meta_data':meta_data ,'row' : row, 'shard': _shard}
 
 if __name__ =='__main__':
@@ -237,7 +237,7 @@ if __name__ =='__main__':
     print("starting from shard ",curr_shard)
 
     if node_id != -1 and total_nodes !=-1:
-        curr_shard = node_id
+        curr_shard += node_id - 1
         process_count = total_nodes
 
     ip = IndicProcessor(inference=True)

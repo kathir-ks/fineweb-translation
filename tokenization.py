@@ -224,8 +224,13 @@ def main(args):
                 meta_data = [meta_data[-1]]
             else:
                 meta_data = []
-            assert len(meta_data) == len(sentences)
-            assert len(meta_data) == len(temp_ids)
+                
+            # assert len(meta_data) == len(sentences)
+            # assert len(meta_data) == len(temp_ids)
+            assert len(sentences) == len(temp_ids)
+            if len(meta_data) > 0:
+                assert meta_data[0]['id'] == temp_ids[0]
+                assert meta_data[0]['id'] == temp_ids[-1]
             shard += 1
 
 

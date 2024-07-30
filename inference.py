@@ -173,7 +173,11 @@ def main(model, params, data, batch_size):
     print("Inference completed!")
     print(time.time() - t)
     
-    return {'outputs' : outputs, 'placeholder_entity_maps' : _placeholder_entity_maps, 'ids' : _ids,'meta_data': data['meta_data'] ,'row' : row, 'shard': _shard}
+    meta_data = []
+    if 'meta_data' in data.keys():
+        meta_data = data['meta_data']
+        
+    return {'outputs' : outputs, 'placeholder_entity_maps' : _placeholder_entity_maps, 'ids' : _ids,'meta_data':meta_data ,'row' : row, 'shard': _shard}
 
 if __name__ =='__main__':
 

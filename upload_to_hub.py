@@ -55,7 +55,7 @@ for shard in shards:
                         dataset.append({'text':i, 'uuid':j })
         
             else:
-                for i, j in zip(sentences['text'], sentences['uuid'], sentences['meta_data']):
+                for i, j in zip(sentences['text'], sentences['uuid']):
                     dataset.append({'text':i, 'uuid':j })            
 
 if len(dataset) > 0:

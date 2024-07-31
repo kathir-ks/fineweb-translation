@@ -27,16 +27,21 @@ dataset = []
 files = fs.ls(f'{bucket}/{name}/{subset}')
 
 shards = []
-
+max_shard = -1
 for file in files:
     shard_no = int(file.split('/')[-1])
     shards.append(shard_no)
+    if shard_no > max_shard and shard_no <= end:
+        max_shard = shard_no
 
 shards.sort()
 
-max_shard = max(shards)
-
 for shard in shards:
+    
+    if shard < start:
+          continue
+    if shard > max_shard:
+        break
     
     if fs.isfile(f'{bucket}/{name}/{subset}/{shard}/sentences.json'):
         with fs.open(f'{bucket}/{name}/{subset}/{shard}/sentences.json', 'r') as f:
@@ -60,8 +65,12 @@ if len(dataset) > 0:
 
 
 for shard in shards:
-    if shard == max_shard:
+
+    if shard < start:
+        continue
+    if shard > max_shard:
         break
+
     if fs.isfile(f'{bucket}/{name}/{subset}/{shard}/sentences.json'):
         fs.rmdir(f'{bucket}/{name}/{subset}/{shard}')
             

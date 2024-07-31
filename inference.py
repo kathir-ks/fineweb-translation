@@ -152,7 +152,7 @@ def main(model, params, data, batch_size):
             return output
         
         except Exception as e:
-
+            
             print(f"!Error in inference step: {e}")
             return []
 

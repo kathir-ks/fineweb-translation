@@ -219,12 +219,14 @@ if __name__ =='__main__':
 
     curr_shard = 1
     files = fs.ls(f'{bucket}/{name}/{subset}')
+
     shards = []
     for file in files:
-        shards.append(int(file.split('/')[-1]))
+        shard_no = int(file.split('/')[-1])
+        if shard_no % node_id == 0:
+            shards.append(int(file.split('/')[-1]))
     
-    curr_shard = min(shards)
-    total_shards = max(shards)
+    shards.sort()
 
     # for i in range(1, total_shards + 1, 1):
     #     if fs.isfile(f'{bucket}/{name}/{subset}/{i}/output.json'):

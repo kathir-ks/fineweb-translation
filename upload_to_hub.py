@@ -36,6 +36,9 @@ for file in files:
 
 shards.sort()
 
+_row = -1
+_shard = -1
+
 for shard in shards:
     
     if shard < start:
@@ -46,6 +49,8 @@ for shard in shards:
     if fs.isfile(f'{bucket}/{name}/{subset}/{shard}/sentences.json'):
         with fs.open(f'{bucket}/{name}/{subset}/{shard}/sentences.json', 'r') as f:
             sentences = json.load(f)
+            _row = sentences['row']
+            _shard = sentences['shard']
             if 'meta_data' in sentences.keys():
                 if len(sentences['meta_data']) > 0:
                     for i, j, k in zip(sentences['text'], sentences['uuid'], sentences['meta_data']):
@@ -58,7 +63,7 @@ for shard in shards:
                 for i, j in zip(sentences['text'], sentences['uuid']):
                     dataset.append({'text':i, 'uuid':j })            
 
-if len(dataset) > 0:
+if len(dataset) > 0:    
     dataset_to_upload = Dataset.from_list(dataset)
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     dataset_to_upload.push_to_hub(f'{subset}_{start}_{end}_row_wise_{current_time}')
@@ -68,9 +73,18 @@ for shard in shards:
 
     if shard < start:
         continue
+
+    if shard == max_shard:
+        if fs.isfile(f'{bucket}/{name}/{subset}/{shard}/sentences.json'):
+            with fs.open(f'{bucket}/{name}/{subset}/{shard}/sentences.json', 'w') as f: 
+                json.dump({'row':_row, 'shard':_shard})
+        break
+
     if shard > max_shard:
         break
 
     if fs.isfile(f'{bucket}/{name}/{subset}/{shard}/sentences.json'):
+        fs.rm(f'{bucket}/{name}/{subset}/{shard}/sentences.json')
+        fs.rm(f'{bucket}/{name}/{subset}/{shard}/data.json')
         fs.rmdir(f'{bucket}/{name}/{subset}/{shard}')
             

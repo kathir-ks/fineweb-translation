@@ -179,6 +179,42 @@ def main(model, params, data, batch_size):
 
     return {'outputs' : outputs, 'placeholder_entity_maps' : _placeholder_entity_maps, 'ids' : _ids,'meta_data':meta_data ,'row' : row, 'shard': _shard}
 
+
+def _main(shards, fs : AbstractFileSystem, model_path, bucket, name, subset, batch_size, lang):
+
+    ip = IndicProcessor(inference=True)
+    tokenizer = IndicTransTokenizer(direction='en-indic')
+
+    for i in shards:
+
+        if fs.isfile(f'{bucket}/{name}/{subset}/{i}/sentences.json'):
+            continue
+
+        if fs.isfile(f'{bucket}/{name}/{subset}/{i}/data.json'):
+            with fs.open(f'{bucket}/{name}/{subset}/{i}/data.json', 'r') as f:
+                data = json.load(f)
+        else:
+            continue
+
+        model = FlaxIndicTransForConditionalGeneration.from_pretrained(model_path, local_files_only=True,dtype=jnp.float16,)
+        print("model loaded!")
+        params = replicate(model.params)
+        print("model replicated!")
+
+        output = main(model, params, data, batch_size)
+
+        sentences = decode(output, ip, tokenizer, lang)
+
+        sentences = merge(sentences['sentences'], sentences['ids'],sentences['meta_data'], sentences['row'], sentences['shard'])
+
+        with fs.open(f'{bucket}/{name}/{subset}/{i}/sentences.json', 'w') as f:
+            json.dump(sentences, f)
+            
+        with fs.open(f'{bucket}/{name}/{subset}/{i}/data.json', 'w') as f:
+            json.dump({'row':data['row'], 'shard':data['shard']}, f)
+
+        del model, params, data, sentences
+
 if __name__ =='__main__':
 
     parser = argparse.ArgumentParser(description="Tanslate tokenized sentences")
@@ -220,6 +256,10 @@ if __name__ =='__main__':
     curr_shard = 1
     files = fs.ls(f'{bucket}/{name}/{subset}')
 
+    if node_id == -1 and total_nodes == -1:
+        node_id = pid + 1
+        total_nodes = process_count
+
     shards = []
     for file in files:
         shard_no = int(file.split('/')[-1])
@@ -228,52 +268,57 @@ if __name__ =='__main__':
     
     shards.sort()
 
-    # for i in range(1, total_shards + 1, 1):
-    #     if fs.isfile(f'{bucket}/{name}/{subset}/{i}/output.json'):
-    #         curr_shard = i + 1
+    if len(shards) > 0:
+        print('starting from shard ', shard[0])
+
+    _shards = []
+
+    while(len(shards) > 0):
+
+        _main(shards, fs, model_path, bucket, name, subset, batch_size, lang)
+
+        files = fs.ls(f'{bucket}/{name}/{subset}')
+        for file in files:
+            shard_no = int(file.split('/')[-1])
+            if shard_no % node_id == 0:
+                if shard_no not in shards:
+                    _shards.append(int(file.split('/')[-1]))
+
+        _shards.sort()
+        shards = _shards[:]
+        _shards = []
+
+
+    # shards = []
+
+    # for i in shards:
+
+    #     if fs.isfile(f'{bucket}/{name}/{subset}/{i}/sentences.json'):
+    #         continue
+
+    #     if fs.isfile(f'{bucket}/{name}/{subset}/{i}/data.json'):
+    #         with fs.open(f'{bucket}/{name}/{subset}/{i}/data.json', 'r') as f:
+    #             data = json.load(f)
     #     else:
-    #         break
-    
-    curr_shard = curr_shard + pid
-    
-    print("starting from shard ",curr_shard)
+    #         continue
 
-    if node_id != -1 and total_nodes !=-1:
-        curr_shard += node_id - 1
-        process_count = total_nodes
+    #     model = FlaxIndicTransForConditionalGeneration.from_pretrained(model_path, local_files_only=True,dtype=jnp.float16,)
+    #     print("model loaded!")
+    #     params = replicate(model.params)
+    #     print("model replicated!")
 
-    ip = IndicProcessor(inference=True)
-    tokenizer = IndicTransTokenizer(direction='en-indic')
+    #     output = main(model, params, data, batch_size)
 
-    for i in range(curr_shard, total_shards + 1, process_count):
+    #     sentences = decode(output, ip, tokenizer, lang)
 
-        if fs.isfile(f'{bucket}/{name}/{subset}/{i}/sentences.json'):
-            continue
+    #     sentences = merge(sentences['sentences'], sentences['ids'],sentences['meta_data'], sentences['row'], sentences['shard'])
 
-        if not fs.isfile(f'{bucket}/{name}/{subset}/{i}/data.json'):
-            print(f'{bucket}/{name}/{subset}/{i}/data.json not found')
-            break
-
-        with fs.open(f'{bucket}/{name}/{subset}/{i}/data.json', 'r') as f:
-            data = json.load(f)
-
-        model = FlaxIndicTransForConditionalGeneration.from_pretrained(model_path, local_files_only=True,dtype=jnp.float16,)
-        print("model loaded!")
-        params = replicate(model.params)
-        print("model replicated!")
-
-        output = main(model, params, data, batch_size)
-
-        sentences = decode(output, ip, tokenizer, lang)
-
-        sentences = merge(sentences['sentences'], sentences['ids'],sentences['meta_data'], sentences['row'], sentences['shard'])
-
-        with fs.open(f'{bucket}/{name}/{subset}/{i}/sentences.json', 'w') as f:
-            json.dump(sentences, f)
+    #     with fs.open(f'{bucket}/{name}/{subset}/{i}/sentences.json', 'w') as f:
+    #         json.dump(sentences, f)
             
-        with fs.open(f'{bucket}/{name}/{subset}/{i}/data.json', 'w') as f:
-            json.dump({'row':data['row'], 'shard':data['shard']}, f)
+    #     with fs.open(f'{bucket}/{name}/{subset}/{i}/data.json', 'w') as f:
+    #         json.dump({'row':data['row'], 'shard':data['shard']}, f)
 
-        del model, params, data, sentences
+    #     del model, params, data, sentences
 
     

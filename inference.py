@@ -1,7 +1,7 @@
 import os
 import jax
 # Initialize jax distributed
-jax.distributed.initialize()
+# jax.distributed.initialize()
 
 import jax.numpy as jnp
 import numpy as np

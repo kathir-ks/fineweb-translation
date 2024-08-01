@@ -269,7 +269,7 @@ if __name__ =='__main__':
     shards.sort()
 
     if len(shards) > 0:
-        print('starting from shard ', shard[0])
+        print('starting from shard ', shards[0])
 
     _shards = []
 

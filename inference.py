@@ -23,6 +23,17 @@ from IndicTransTokenizer import IndicTransTokenizer, IndicProcessor
 # start tracing
 initialise_tracking()
 
+def find_shards(shards, node_id, total_nodes):
+    
+    _shards = []
+    l = len(shards)
+    i = node_id
+    while(i<=l):
+        _shards.append(shards[i-1])
+        i += total_nodes
+
+    return _shards
+
 def load_json_file(file_path):
     with open(file_path, 'r') as f:
         data = json.load(f)
@@ -263,10 +274,11 @@ if __name__ =='__main__':
     shards = []
     for file in files:
         shard_no = int(file.split('/')[-1])
-        if shard_no % node_id == 0:
-            shards.append(int(file.split('/')[-1]))
-    
+        shards.append(int(file.split('/')[-1]))
+
     shards.sort()
+
+    shards = find_shards(shards, node_id, total_nodes)
 
     if len(shards) > 0:
         print('starting from shard ', shards[0])
@@ -275,16 +287,16 @@ if __name__ =='__main__':
 
     while(len(shards) > 0):
 
+        print(shards)
         _main(shards, fs, model_path, bucket, name, subset, batch_size, lang)
 
         files = fs.ls(f'{bucket}/{name}/{subset}')
         for file in files:
             shard_no = int(file.split('/')[-1])
-            if shard_no % node_id == 0:
-                if shard_no not in shards:
-                    _shards.append(int(file.split('/')[-1]))
+            _shards.append(int(file.split('/')[-1]))
 
         _shards.sort()
+        _shards = find_shards(_shards, node_id, total_nodes)
         shards = _shards[:]
         _shards = []
 

@@ -24,7 +24,7 @@ def decode(data , ip : IndicProcessor, tokenizer : IndicTransTokenizer, lang : s
 
     return {'sentences': sentences, 'ids':ids, 'row':row, 'shard':shard,'meta_data': data['meta_data']}
 
-def merge(_sentences, _ids,meta_data, row, shard):
+def merge(_sentences, _ids,_meta_data, row, shard):
     sentences = []
     for sentence in _sentences:
         sentences.extend(sentence)
@@ -38,6 +38,11 @@ def merge(_sentences, _ids,meta_data, row, shard):
     uuid = []
     text = []
     prev_uuid = -1
+    meta_data = []
+    meta_data_lookup = {}
+    for md in _meta_data:
+        meta_data_lookup[md['id']] = md
+
     for sentence, id in zip(sentences, ids):
         if id == prev_uuid:
             text[-1].append(sentence)
@@ -45,9 +50,12 @@ def merge(_sentences, _ids,meta_data, row, shard):
             prev_uuid = id
             text.append([sentence])
             uuid.append(id)
+            if len(meta_data_lookup.keys()) > 0:
+                print(1)
+                meta_data.append(meta_data_lookup[id])
 
     assert len(text) == len(uuid)
-    if len(meta_data) > 0:
+    if len(_meta_data) > 0:
         assert len(meta_data) == len(text)
     
     return {'text':text, 'uuid':uuid, 'row':row, 'shard':shard, 'meta_data':meta_data}

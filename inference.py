@@ -251,6 +251,7 @@ if __name__ =='__main__':
 
     pid = jax.process_index()
     print(pid)
+    
     global_devices = jax.device_count()
     local_devices = jax.local_device_count()
     process_count = jax.process_count()
@@ -297,7 +298,14 @@ if __name__ =='__main__':
 
         _shards.sort()
         _shards = find_shards(_shards, node_id, total_nodes)
-        shards = _shards[:]
+        
+        updated_shards = []
+        for shard in _shards:
+            if shard not in shards:
+                updated_shards.append(shard)
+
+        shards = updated_shards[:]
+        updated_shards = []
         _shards = []
 
 

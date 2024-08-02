@@ -47,7 +47,8 @@ def merge(_sentences, _ids,meta_data, row, shard):
             uuid.append(id)
 
     assert len(text) == len(uuid)
-    assert len(meta_data) == len(text)
+    if len(meta_data) > 0:
+        assert len(meta_data) == len(text)
     
     return {'text':text, 'uuid':uuid, 'row':row, 'shard':shard, 'meta_data':meta_data}
     

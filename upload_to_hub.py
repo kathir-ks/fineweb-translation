@@ -47,21 +47,25 @@ for shard in shards:
         break
     
     if fs.isfile(f'{bucket}/{name}/{subset}/{shard}/sentences.json'):
-        with fs.open(f'{bucket}/{name}/{subset}/{shard}/sentences.json', 'r') as f:
-            sentences = json.load(f)
-            _row = sentences['row']
-            _shard = sentences['shard']
-            if 'meta_data' in sentences.keys():
-                if len(sentences['meta_data']) > 0:
-                    for i, j, k in zip(sentences['text'], sentences['uuid'], sentences['meta_data']):
-                        dataset.append({'text':i, 'uuid':j, 'meta_data':k})
+        try:
+            with fs.open(f'{bucket}/{name}/{subset}/{shard}/sentences.json', 'r') as f:
+                sentences = json.load(f)
+                _row = sentences['row']
+                _shard = sentences['shard']
+                if 'meta_data' in sentences.keys():
+                    if len(sentences['meta_data']) > 0:
+                        for i, j, k in zip(sentences['text'], sentences['uuid'], sentences['meta_data']):
+                            dataset.append({'text':i, 'uuid':j, 'meta_data':k})
+                    else:
+                        for i, j in zip(sentences['text'], sentences['uuid']):
+                            dataset.append({'text':i, 'uuid':j })
+        
                 else:
                     for i, j in zip(sentences['text'], sentences['uuid']):
-                        dataset.append({'text':i, 'uuid':j })
-        
-            else:
-                for i, j in zip(sentences['text'], sentences['uuid']):
-                    dataset.append({'text':i, 'uuid':j })            
+                        dataset.append({'text':i, 'uuid':j })   
+
+        except Exception as e:
+            print(e)         
 
 if len(dataset) > 0:    
     dataset_to_upload = Dataset.from_list(dataset)
@@ -75,10 +79,13 @@ for shard in shards:
         continue
 
     if shard == max_shard:
-        if fs.isfile(f'{bucket}/{name}/{subset}/{shard}/sentences.json'):
-            with fs.open(f'{bucket}/{name}/{subset}/{shard}/sentences.json', 'w') as f: 
-                json.dump({'row':_row, 'shard':_shard})
-        break
+        try:
+            if fs.isfile(f'{bucket}/{name}/{subset}/{shard}/sentences.json'):
+               with fs.open(f'{bucket}/{name}/{subset}/{shard}/sentences.json', 'w') as f: 
+                    json.dump({'row':_row, 'shard':_shard})
+            break
+        except Exception as e:
+            print(e)
 
     if shard > max_shard:
         break

@@ -27,6 +27,7 @@ def parse_args():
     parser.add_argument("--rows_per_shard", type=int, default=1000, required=False, help='no of rows per shard')
     parser.add_argument("--shard_size", type=int,default=64000, required=False, help='sharding based on no of sentences')
     parser.add_argument("--resume",type=bool , required=False, default=False)
+    parser.add_argument("--total_nodes", type=int, required=True, help="to split the shards based on the no of nodes")
 
     args = parser.parse_args()
     return args
@@ -126,7 +127,7 @@ def preprocess_and_tokenize(tokenizer, ip, batch, src_lang, tgt_lang):
 
 
 
-def _main(sentences, temp_ids, meta_data, src_lang, tgt_lang, tokenization_batch_size, name, subset, bucket, shard, fs, row):
+def _main(sentences, temp_ids, meta_data, src_lang, tgt_lang, tokenization_batch_size, name, subset, bucket, shard, total_nodes, fs, row):
 
     tokenized_inputs = []
     ids = []
@@ -148,7 +149,7 @@ def _main(sentences, temp_ids, meta_data, src_lang, tgt_lang, tokenization_batch
 
     data = {'tokenized_inputs':tokenized_inputs, "ids":ids, "row": row, "shard":shard, 'meta_data':meta_data}
 
-    with fs.open(f'{bucket}/{name}/{subset}/{shard}/data.json' ,'w') as f:
+    with fs.open(f'{bucket}/{name}/{subset}/{shard % total_nodes}/tokenized/{shard}.json' ,'w') as f:
         json.dump(data, f)
 
 
@@ -164,6 +165,7 @@ def main(args):
     bucket = args.bucket
     shard_size = args.shard_size
     resume = args.resume
+    total_nodes = args.total_nodes
 
     data = load_data(name, subset, streaming)
 
@@ -179,27 +181,11 @@ def main(args):
     fs : AbstractFileSystem = fsspec.core.url_to_fs(bucket)[0]
 
     if resume:
-        l = 0
-        if fs.isdir(f'{bucket}/{name}/{subset}'):
-            files = fs.ls(f'{bucket}/{name}/{subset}')
-            l = len(files)
-            shards = []
-            for file in files:
-                shards.append(int(file.split('/')[-1]))
-
-            max_shard = max(shards)
-
-        # for file in files:
-        #     shard_no = int(file.split('/')[-1])
-        #     if shard_no > max_shard:
-        #         max_shard = shard_no
-
-        if l!=0:
-            with fs.open(f'{bucket}/{name}/{subset}/{max_shard}/data.json') as f:
-                _data = json.load(f)
-
-            tokenized_rows =_data['row']
-            tokenized_shards = _data['shard']
+        if fs.isfile(f'{bucket}/{name}/{subset}/tokenization_meta_data.json'):
+            with fs.open(f'{bucket}/{name}/{subset}/tokenization_meta_data.json', 'r') as f:
+                tokenization_meta_data = json.load(f)
+                tokenized_rows = tokenization_meta_data['row']
+                tokenized_shards = tokenization_meta_data['shard']
 
     if tokenized_shards != 0:
         # print(file)
@@ -217,7 +203,7 @@ def main(args):
         sentences.extend(sents)
         row += 1
         if len(sentences) >= shard_size:
-            _main(sentences[: shard_size], temp_ids[: shard_size], meta_data, src_lang, tgt_lang, tokenization_batch_size, name, subset, bucket, shard, fs, row)
+            _main(sentences[: shard_size], temp_ids[: shard_size], meta_data, src_lang, tgt_lang, tokenization_batch_size, name, subset, bucket, shard, total_nodes, fs, row)
             sentences = sentences[shard_size : ]
             temp_ids = temp_ids[shard_size : ]
             if len(temp_ids) > 0:
@@ -225,13 +211,15 @@ def main(args):
             else:
                 meta_data = []
                 
-            # assert len(meta_data) == len(sentences)
-            # assert len(meta_data) == len(temp_ids)
             assert len(sentences) == len(temp_ids)
             if len(meta_data) > 0:
                 assert meta_data[0]['id'] == temp_ids[0]
                 assert meta_data[0]['id'] == temp_ids[-1]
             shard += 1
+
+            if shard % 100 == 0:
+                with fs.open(f'{bucket}/{name}/{subset}/tokenization_meta_data.json', 'w') as f:
+                    json.dump({'row':row, 'shard': shard}, f)
 
 
 if __name__ == '__main__':

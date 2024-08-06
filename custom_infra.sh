@@ -29,7 +29,7 @@ while true; do
     if [[ $output != *"READY"* ]]; then
         echo "TPU VM is not ready. Creating or recreating..."
         gcloud compute tpus tpu-vm create "main-$node_id" --zone=$region --accelerator-type=$accelerator_type --version=tpu-ubuntu2204-base --preemptible
-        sleep 10
+        sleep 20
         gcloud compute tpus tpu-vm ssh "main-$node_id" --zone=$region --command='
             git clone https://github.com/kathir-ks/fineweb-translation;
             cd fineweb-translation;
@@ -45,7 +45,7 @@ while true; do
             break
         else
             echo "Inference failed or TPU was preempted. Retrying..."
-            sleep 30
+            sleep 60
         fi
     fi
 done

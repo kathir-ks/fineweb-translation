@@ -42,6 +42,7 @@ _shard = -1
 for shard in shards:
     
     if shard < start:
+          
           continue
     if shard > max_shard:
         break

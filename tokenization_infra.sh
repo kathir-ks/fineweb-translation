@@ -54,7 +54,7 @@ while true; do
     while [[ $output != *"READY"* ]]; do
         echo "TPU VM is not ready, setting up the TPU VM"
         setup_tpu_vm $node_id
-        sleep 20
+        sleep 60
         output=$(gcloud compute tpus tpu-vm describe "main-$node_id" --zone=$region 2>&1)
     done
 
@@ -65,7 +65,7 @@ while true; do
         break
     else
         echo "TPU VM was preempted or tokenization failed, waiting and trying again"
-        sleep 100
+        sleep 120
     fi
 done
 

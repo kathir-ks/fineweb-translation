@@ -23,16 +23,21 @@ from IndicTransTokenizer import IndicTransTokenizer, IndicProcessor
 # start tracing
 initialise_tracking()
 
-def find_shards(shards, node_id, total_nodes):
-    
-    _shards = []
-    l = len(shards)
-    i = node_id
-    while(i<=l):
-        _shards.append(shards[i-1])
-        i += total_nodes
+def find_shards(fs, bucket, name, subset, node_id):
 
-    return _shards
+    shards = []
+    try:
+        files = fs.ls(f'{bucket}/{name}/{subset}/{node_id}/tokenized')
+
+        for file in files:
+            shards.append(int(file.split('.')[-2].split('/')[-1]))
+
+        shards.sort()
+        return shards
+    
+    except Exception as e:
+        print(e)
+        return []
 
 def load_json_file(file_path):
     with open(file_path, 'r') as f:
@@ -191,24 +196,19 @@ def main(model, params, data, batch_size):
     return {'outputs' : outputs, 'placeholder_entity_maps' : _placeholder_entity_maps, 'ids' : _ids,'meta_data':meta_data ,'row' : row, 'shard': _shard}
 
 
-def _main(shards, fs : AbstractFileSystem, model_path, bucket, name, subset, batch_size, lang):
+def _main(shards, fs : AbstractFileSystem, model_path, bucket, name, subset, node_id, batch_size, lang):
 
     ip = IndicProcessor(inference=True)
     tokenizer = IndicTransTokenizer(direction='en-indic')
 
     for i in shards:
 
-        if fs.isfile(f'{bucket}/{name}/{subset}/{i}/sentences.json'):
-            continue
-
-        if fs.isfile(f'{bucket}/{name}/{subset}/{i}/data.json'):
-            with fs.open(f'{bucket}/{name}/{subset}/{i}/data.json', 'r') as f:
-                data = json.load(f)
-        else:
-            continue
+        with fs.open(f'{bucket}/{name}/{subset}/{node_id}/tokenized/{i}.json', 'r') as f:
+            data = json.load(f)
 
         model = FlaxIndicTransForConditionalGeneration.from_pretrained(model_path, local_files_only=True,dtype=jnp.float16,)
         print("model loaded!")
+
         params = replicate(model.params)
         print("model replicated!")
 
@@ -218,13 +218,12 @@ def _main(shards, fs : AbstractFileSystem, model_path, bucket, name, subset, bat
 
         sentences = merge(sentences['sentences'], sentences['ids'],sentences['meta_data'], sentences['row'], sentences['shard'])
 
-        with fs.open(f'{bucket}/{name}/{subset}/{i}/sentences.json', 'w') as f:
+        with fs.open(f'{bucket}/{name}/{subset}/{node_id}/output/{i}.json', 'w') as f:
             json.dump(sentences, f)
-            
-        with fs.open(f'{bucket}/{name}/{subset}/{i}/data.json', 'w') as f:
-            json.dump({'row':data['row'], 'shard':data['shard']}, f)
 
-        del model, params, data, sentences
+        fs.rm(f'{bucket}/{name}/{subset}/{node_id}/tokenized/{i}.json')
+            
+        del data, sentences
 
 if __name__ =='__main__':
 
@@ -266,43 +265,25 @@ if __name__ =='__main__':
         os.system(f'gsutil cp -R {bucket}/IndicTrans2/flax_weights/200m {curr_dir}/flax_weights/')
 
     curr_shard = 1
-    files = fs.ls(f'{bucket}/{name}/{subset}')
 
     if node_id == -1 and total_nodes == -1:
         node_id = pid + 1
         total_nodes = process_count
 
-    shards = []
-    for file in files:
-        shard_no = int(file.split('/')[-1])
-        shards.append(int(file.split('/')[-1]))
-
-    shards.sort()
-
-    shards = find_shards(shards, node_id, total_nodes)
-
-    if len(shards) > 0:
-        print('starting from shard ', shards[0])
-
+    shards = find_shards(fs, bucket, name, subset, node_id)
     _shards = []
 
     while(len(shards) > 0):
 
         print(shards)
-        _main(shards, fs, model_path, bucket, name, subset, batch_size, lang)
+        _main(shards, fs, model_path, bucket, name, subset, node_id, batch_size, lang)
 
-        files = fs.ls(f'{bucket}/{name}/{subset}')
-        for file in files:
-            shard_no = int(file.split('/')[-1])
-            _shards.append(int(file.split('/')[-1]))
-
-        _shards.sort()
-        _shards = find_shards(_shards, node_id, total_nodes)
+        _shards = find_shards(fs, bucket, name, subset, node_id)
         
         updated_shards = []
-        for shard in _shards:
-            if shard not in shards:
-                updated_shards.append(shard)
+        for _shard in _shards:
+            if _shard not in shards:
+                updated_shards.append(_shard)
 
         shards = updated_shards[:]
         updated_shards = []

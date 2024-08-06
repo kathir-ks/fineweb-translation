@@ -12,13 +12,14 @@ while [[ "$#" -gt 0 ]]; do
         --tgt_lang) tgt_lang="$2"; shift ;;
         --tokenization_batch_size) tokenization_batch_size="$2"; shift ;;
         --shard_size) shard_size="$2"; shift ;;
+        --total_nodes) total_nodes="$2"; shift ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
     shift
 done
 
 # Ensure all required arguments are provided
-if [ -z "$subset" ] || [ -z "$region" ] || [ -z "$accelerator_type" ] || [ -z "$bucket" ] || [ -z "$dataset" ] || [ -z "$src_lang" ] || [ -z "$tgt_lang" ] || [ -z "$tokenization_batch_size" ] || [ -z "$shard_size" ]; then
+if [ -z "$subset" ] || [ -z "$region" ] || [ -z "$accelerator_type" ] || [ -z "$bucket" ] || [ -z "$dataset" ] || [ -z "$src_lang" ] || [ -z "$tgt_lang" ] || [ -z "$tokenization_batch_size" ] || [ -z "$shard_size" ] || [ -z "$total_nodes"]; then
     echo "Usage: $0 --subset SUBSET --region REGION --accelerator_type ACCELERATOR_TYPE --bucket BUCKET --dataset DATASET --src_lang SRC_LANG --tgt_lang TGT_LANG --tokenization_batch_size TOKENIZATION_BATCH_SIZE --shard_size SHARD_SIZE"
     exit 1
 fi
@@ -41,7 +42,7 @@ run_tokenization() {
 
     gcloud compute tpus tpu-vm ssh "main-$node_id" --zone=$region --command="
         cd fineweb-translation;
-        python3 tokenization.py --name $dataset --subset $subset --src_lang $src_lang --tgt_lang $tgt_lang --tokenization_batch_size $tokenization_batch_size --bucket $bucket --shard_size $shard_size --resume True"
+        python3 tokenization.py --name $dataset --subset $subset --src_lang $src_lang --tgt_lang $tgt_lang --tokenization_batch_size $tokenization_batch_size --bucket $bucket --shard_size $shard_size --resume True --total_nodes $total_nodes"
 }
 
 # Main script

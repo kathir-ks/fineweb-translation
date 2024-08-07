@@ -26,10 +26,9 @@ fi
 
 # Function to create and set up the TPU VM
 setup_tpu_vm() {
-    local node_id=$1
 
-    gcloud compute tpus tpu-vm create "main-$node_id" --zone=$region --accelerator-type=$accelerator_type --version=tpu-ubuntu2204-base --preemptible
-    gcloud compute tpus tpu-vm ssh "main-$node_id" --zone=$region --command='
+    gcloud compute tpus tpu-vm create tokenizer --zone=$region --accelerator-type=$accelerator_type --version=tpu-ubuntu2204-base --preemptible
+    gcloud compute tpus tpu-vm ssh tokenizer --zone=$region --command='
         git clone https://github.com/kathir-ks/fineweb-translation;
         cd fineweb-translation;
         chmod +x setup_tokenization_env.sh;
@@ -38,9 +37,8 @@ setup_tpu_vm() {
 
 # Function to run the tokenization process
 run_tokenization() {
-    local node_id=$1
 
-    gcloud compute tpus tpu-vm ssh "main-$node_id" --zone=$region --command="
+    gcloud compute tpus tpu-vm ssh tokenizer --zone=$region --command="
         cd fineweb-translation;
         python3 tokenization.py --name $dataset --subset $subset --src_lang $src_lang --tgt_lang $tgt_lang --tokenization_batch_size $tokenization_batch_size --bucket $bucket --shard_size $shard_size --resume True --total_nodes $total_nodes"
 }
@@ -50,16 +48,16 @@ node_id=0
 
 # Run tokenization in a loop to handle potential preemption
 while true; do
-    output=$(gcloud compute tpus tpu-vm describe "main-$node_id" --zone=$region 2>&1)
+    output=$(gcloud compute tpus tpu-vm describe tokenizer --zone=$region 2>&1)
 
     while [[ $output != *"READY"* ]]; do
         echo "TPU VM is not ready, setting up the TPU VM"
-        setup_tpu_vm $node_id
+        setup_tpu_vm 
         sleep 60
-        output=$(gcloud compute tpus tpu-vm describe "main-$node_id" --zone=$region 2>&1)
+        output=$(gcloud compute tpus tpu-vm describe tokenizer --zone=$region 2>&1)
     done
 
-    run_tokenization $node_id
+    run_tokenization 
 
     if [ $? -eq 0 ]; then
         echo "Tokenization completed successfully"

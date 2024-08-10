@@ -187,7 +187,7 @@ def main(args):
                 tokenization_meta_data = json.load(f)
                 tokenized_rows = tokenization_meta_data['row']
                 tokenized_shards = tokenization_meta_data['shard']
-                tokenized_files = tokenization_meta_data['files']
+                tokenized_files = tokenization_meta_data['file']
 
 
     if tokenized_shards != 0:

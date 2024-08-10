@@ -1,6 +1,8 @@
 #!/bin/bash
 
 # Install required packages
+pip install networkx==2.5
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 pip install nltk sacremoses pandas regex mock "transformers>=4.33.2" mosestokenizer
 pip install bitsandbytes scipy accelerate datasets
 pip install sentencepiece sacrebleu 

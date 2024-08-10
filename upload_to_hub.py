@@ -27,17 +27,21 @@ fs : AbstractFileSystem = fsspec.core.url_to_fs(f'{bucket}')[0]
 dataset = []
 
 for node in range(start, end + 1):
-    files = fs.ls(f'{bucket}/{name}/{subset}/{node}/output')
-    shards = []
-    for file in files:
-        shards.append(int(file.split('.')[-2].split('/')[-1]))
-    shards.sort()
+    try:
+        files = fs.ls(f'{bucket}/{name}/{subset}/{node}/output')
+        shards = []
+        for file in files:
+            shards.append(int(file.split('.')[-2].split('/')[-1]))
+        shards.sort()
 
-    for shard in shards:
-        with fs.open(f'{bucket}/{name}/{subset}/{node}/output/{shard}.json', 'r') as f:
-            sentences = json.load(f)
-            for i, j, k in zip(sentences['text'], sentences['uuid'], sentences['meta_data']):
-                dataset.append({'text':i, 'uuid':j, 'meta_data':k})
+        for shard in shards:
+            with fs.open(f'{bucket}/{name}/{subset}/{node}/output/{shard}.json', 'r') as f:
+                sentences = json.load(f)
+                for i, j, k in zip(sentences['text'], sentences['uuid'], sentences['meta_data']):
+                    dataset.append({'text':i, 'uuid':j, 'meta_data':k})
+    
+    except Exception as e:
+        print(e)
                          
 if len(dataset) > 0:    
     dataset_to_upload = Dataset.from_list(dataset)
@@ -45,11 +49,15 @@ if len(dataset) > 0:
     dataset_to_upload.push_to_hub(f'{subset}_row_wise_{current_time}')
             
 for i in range(start, end + 1):
-    files = fs.ls(f'{bucket}/{name}/{subset}/{i}/output')
-    shards = []
-    for file in files:
-        shards.append(int(file.split('.')[-2].split('/')[-1]))
-    shards.sort()
+    try:
+        files = fs.ls(f'{bucket}/{name}/{subset}/{i}/output')
+        shards = []
+        for file in files:
+            shards.append(int(file.split('.')[-2].split('/')[-1]))
+        shards.sort()
 
-    for shard in shards:
-        fs.rm(f'{bucket}/{name}/{subset}/{i}/output/{shard}.json')
+        for shard in shards:
+            fs.rm(f'{bucket}/{name}/{subset}/{i}/output/{shard}.json')
+
+    except Exception as e:
+        print(e)

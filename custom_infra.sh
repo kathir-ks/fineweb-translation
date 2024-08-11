@@ -50,4 +50,7 @@ while true; do
     fi
 done
 
+echo "Deleting TPU VM..."
+gcloud compute tpus tpu-vm delete "main-$node_id" --zone=$region --quiet
+
 echo "Script execution completed"

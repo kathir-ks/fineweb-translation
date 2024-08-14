@@ -164,7 +164,7 @@ def process_file(args):
     row = 0
     shard_start = file_no * 2500 + 1
     shard = shard_start
-
+    tokenized_rows = 0
     fs: AbstractFileSystem = fsspec.core.url_to_fs(bucket)[0]
 
     # Check if we need to resume
@@ -174,13 +174,13 @@ def process_file(args):
         resume = True
         with fs.open(meta_file_path, 'r') as f:
             resume_data = json.load(f)
-            row = resume_data['row']
+            tokenized_rows = resume_data['row']
             shard = resume_data['shard']
             print(f"Resuming file {file_no} from row {row}, shard {shard}")
 
     data = load_data(name, subset, streaming, file_no, total_files)
     for d in data:
-        if resume and row < resume_data['row']:
+        if resume and row < (tokenized_rows - 1):
             row += 1
             continue
 

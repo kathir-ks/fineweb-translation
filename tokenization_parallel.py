@@ -168,14 +168,15 @@ def process_file(args):
     fs: AbstractFileSystem = fsspec.core.url_to_fs(bucket)[0]
 
     # Check if we need to resume
-    if resume:
-        meta_file_path = f'{bucket}/{name}/{subset}/tokenization_meta_data_{file_no}.json'
-        if fs.exists(meta_file_path):
-            with fs.open(meta_file_path, 'r') as f:
-                resume_data = json.load(f)
-                row = resume_data['row']
-                shard = resume_data['shard']
-                print(f"Resuming file {file_no} from row {row}, shard {shard}")
+    
+    meta_file_path = f'{bucket}/{name}/{subset}/tokenization_meta_data_{file_no}.json'
+    if fs.exists(meta_file_path):
+        resume = True
+        with fs.open(meta_file_path, 'r') as f:
+            resume_data = json.load(f)
+            row = resume_data['row']
+            shard = resume_data['shard']
+            print(f"Resuming file {file_no} from row {row}, shard {shard}")
 
     data = load_data(name, subset, streaming, file_no, total_files)
     for d in data:

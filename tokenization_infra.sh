@@ -16,7 +16,7 @@ while [[ "$#" -gt 0 ]]; do
         --total_nodes) total_nodes="$2"; shift ;;
         --total_files) total_files="$2"; shift ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
-    esac
+    esac 
     shift
 done
 

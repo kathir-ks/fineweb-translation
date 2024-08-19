@@ -44,8 +44,7 @@ while true; do
             echo "Inference completed successfully"
             break
         else
-            sleep 120
-            sleep_time=$((RANDOM % 201 + 100))
+            sleep 60
             echo "Inference failed or TPU was preempted. Retrying..."
             sleep $sleep_time
         fi

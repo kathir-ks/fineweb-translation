@@ -53,7 +53,7 @@ run_tokenization() {
 
     if ! gcloud compute tpus tpu-vm ssh $tpu_name --zone=$region --command="
         cd fineweb-translation;
-        python3 _tokenization.py --name $dataset --subset $subset --src_lang $src_lang --tgt_lang $tgt_lang --tokenization_batch_size $tokenization_batch_size --bucket $bucket --shard_size $shard_size --resume True --total_nodes $total_nodes --total_files $total_files"; then
+        python3 tokenization_parallel.py --name $dataset --subset $subset --src_lang $src_lang --tgt_lang $tgt_lang --tokenization_batch_size $tokenization_batch_size --bucket $bucket --shard_size $shard_size --resume True --total_nodes $total_nodes --total_files $total_files"; then
         echo "Tokenization process failed"
         return 1
     fi

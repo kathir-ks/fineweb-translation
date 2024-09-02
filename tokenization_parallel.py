@@ -72,7 +72,7 @@ def save_data_and_push_to_gcs(subset, shard, data, bucket):
     # remove the file from disk
     os.system(f'rm {subset}_{shard}.json')
 
-def load_data(name,subset, streaming, file_no, total_files , split="train"):
+def load_data(name, subset, streaming, file_no, total_files, split="train"):
     
     data =  load_dataset(name, data_files={f'data/{subset}/train-{str(file_no).zfill(5)}-of-{str(total_files).zfill(5)}.parquet'}, streaming=streaming, split=split)
     # data = data['text']

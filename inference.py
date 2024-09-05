@@ -1,7 +1,7 @@
 import os
 import jax
 # Initialize jax distributed
-# jax.distributed.initialize()
+jax.distributed.initialize()
 
 import jax.numpy as jnp
 import numpy as np
@@ -267,7 +267,7 @@ if __name__ =='__main__':
     curr_shard = 1
 
     if node_id == -1 and total_nodes == -1:
-        node_id = pid + 1
+        node_id = pid 
         total_nodes = process_count
 
     shards = find_shards(fs, bucket, name, subset, node_id)

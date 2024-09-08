@@ -134,6 +134,7 @@ def main(model, params, data, batch_size):
     assert len(inputs) == len(placeholder_entity_maps)
     assert len(placeholder_entity_maps) == len(ids)
 
+    @jax.jit()
     def generate(
             batch,
             params,
@@ -151,6 +152,7 @@ def main(model, params, data, batch_size):
 
     # no need to jit the generate function because in jax by default pmapped functions are jitted!
 
+    @jax.jit()
     def run_inference_step(batch, params, run_ds):
 
         try:

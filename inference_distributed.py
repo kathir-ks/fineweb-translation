@@ -134,6 +134,7 @@ def main(model, params, data, batch_size):
     assert len(inputs) == len(placeholder_entity_maps)
     assert len(placeholder_entity_maps) == len(ids)
 
+    @jax.jit
     def generate(
             batch,
             params,
@@ -150,7 +151,9 @@ def main(model, params, data, batch_size):
     p_generate = jax.pmap(generate) 
 
     # no need to jit the generate function because in jax by default pmapped functions are jitted!
-    def run_inference_step(batch, params, run_ds):
+
+    @jax.jit
+    def run_inference_step(batch, params, __output__):
 
         try:
             input_batch = {
@@ -164,7 +167,8 @@ def main(model, params, data, batch_size):
             else:
                 output = output[0]
 
-            return output
+            __output__ = output
+            return __output__
         
         except Exception as e:
             
@@ -176,7 +180,9 @@ def main(model, params, data, batch_size):
     _ids = []
 
     for input, placeholder_entity_map, id in zip(inputs, placeholder_entity_maps, ids):
-        output = run_inference_step(input, params, None)
+        output = []
+        if jax.process_index == 0:
+            output = run_inference_step(input, params, None)
         if len(output) > 0:
             outputs.append(output.tolist())
             _placeholder_entity_maps.append(placeholder_entity_map)

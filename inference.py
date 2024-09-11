@@ -23,6 +23,8 @@ from IndicTransTokenizer import IndicTransTokenizer, IndicProcessor
 # start tracing
 initialise_tracking()
 
+local_device_count = jax.local_device_count()
+
 def find_shards(fs, bucket, name, subset, node_id):
 
     shards = []

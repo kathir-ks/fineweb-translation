@@ -28,9 +28,9 @@ while true; do
 
     if [[ $output != *"READY"* ]]; then
         echo "TPU VM is not ready. Creating or recreating..."
-        gcloud compute tpus tpu-vm create "worker-$node_id" --zone=$region --accelerator-type=$accelerator_type --version=tpu-ubuntu2204-base --preemptible
+        gcloud compute tpus tpu-vm create "worker-$subset-$node_id" --zone=$region --accelerator-type=$accelerator_type --version=tpu-ubuntu2204-base --preemptible
         sleep 20
-        gcloud compute tpus tpu-vm ssh "worker-$node_id" --zone=$region --command='
+        gcloud compute tpus tpu-vm ssh "worker-$subset-$node_id" --zone=$region --command='
             git clone https://github.com/kathir-ks/fineweb-translation;
             cd fineweb-translation;
             chmod +x setup_inference_env.sh;
@@ -38,7 +38,7 @@ while true; do
         sleep 20
     else
         echo "TPU VM is ready. Running inference..."
-        if gcloud compute tpus tpu-vm ssh "worker-$node_id" --zone=$region --command="
+        if gcloud compute tpus tpu-vm ssh "worker-$subset-$node_id" --zone=$region --command="
             cd fineweb-translation;
             python3 inference.py --name $dataset --subset $subset --batch_size $batch_size --bucket $bucket --node_id $node_id --total_nodes $total_nodes --lang $lang"; then
             echo "Inference completed successfully"
@@ -52,6 +52,6 @@ while true; do
 done
 
 echo "Deleting TPU VM..."
-gcloud compute tpus tpu-vm delete "worker-$node_id" --zone=$region --quiet
+gcloud compute tpus tpu-vm delete "worker-$subset-$node_id" --zone=$region --quiet
 
 echo "Script execution completed"

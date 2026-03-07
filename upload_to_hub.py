@@ -1,63 +1,72 @@
-from datasets import Dataset
+"""
+Upload translated output from GCS to the HuggingFace Hub.
+
+Reads decoded sentence shards, flattens them into a HuggingFace Dataset,
+and pushes with a timestamped name.  Cleans up output files after upload.
+"""
+
 import argparse
-import fsspec
-import json
-from fsspec import AbstractFileSystem
+import logging
 from datetime import datetime
 
-parser = argparse.ArgumentParser(description="")
-parser.add_argument("--name", type=str)
-parser.add_argument("--subset", type=str)
-parser.add_argument("--bucket", type=str)
-parser.add_argument("--total_nodes", type=int)
-parser.add_argument("--start", type=int)
-parser.add_argument("--end", type=int)
+from datasets import Dataset
 
-args = parser.parse_args()
+from storage import get_fs, read_json
 
-name = args.name
-subset = args.subset
-bucket = args.bucket
-total_nodes= args.total_nodes
-start = args.start
-end = args.end
+logger = logging.getLogger(__name__)
 
-fs : AbstractFileSystem = fsspec.core.url_to_fs(f'{bucket}')[0]
 
-dataset = []
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Upload translated data to HuggingFace Hub")
+    parser.add_argument("--name", type=str, required=True)
+    parser.add_argument("--subset", type=str, required=True)
+    parser.add_argument("--bucket", type=str, required=True)
+    parser.add_argument("--total_nodes", type=int, required=True)
+    parser.add_argument("--start", type=int, required=True)
+    parser.add_argument("--end", type=int, required=True)
+    parser.add_argument("--log_level", default="INFO",
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR"])
 
-for node in range(start, end + 1):
-    try:
-        files = fs.ls(f'{bucket}/{name}/{subset}/{node}/output')
-        shards = []
-        for file in files:
-            shards.append(int(file.split('.')[-2].split('/')[-1]))
-        shards.sort()
+    args = parser.parse_args()
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
-        for shard in shards:
-            with fs.open(f'{bucket}/{name}/{subset}/{node}/output/{shard}.json', 'r') as f:
-                sentences = json.load(f)
-                for i, j, k in zip(sentences['text'], sentences['uuid'], sentences['meta_data']):
-                    dataset.append({'text':i, 'uuid':j, 'meta_data':k})
-    
-    except Exception as e:
-        print(e)
-                         
-if len(dataset) > 0:    
-    dataset_to_upload = Dataset.from_list(dataset)
-    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dataset_to_upload.push_to_hub(f'{subset}_row_wise_{current_time}')
-            
-for i in range(start, end + 1):
-    try:
-        files = fs.ls(f'{bucket}/{name}/{subset}/{i}/output')
-        shards = []
-        for file in files:
-            shards.append(int(file.split('.')[-2].split('/')[-1]))
-        shards.sort()
+    fs = get_fs(args.bucket)
+    dataset = []
 
-        for shard in shards:
-            fs.rm(f'{bucket}/{name}/{subset}/{i}/output/{shard}.json')
+    for node in range(args.start, args.end + 1):
+        try:
+            files = fs.ls(f'{args.bucket}/{args.name}/{args.subset}/{node}/output')
+            shards = sorted(int(f.split('.')[-2].split('/')[-1]) for f in files)
 
-    except Exception as e:
-        print(e)
+            for shard_id in shards:
+                sentences = read_json(
+                    fs,
+                    f'{args.bucket}/{args.name}/{args.subset}/{node}/output/{shard_id}.json',
+                )
+                for text, uuid, meta in zip(
+                    sentences['text'], sentences['uuid'], sentences['meta_data'],
+                ):
+                    dataset.append({'text': text, 'uuid': uuid, 'meta_data': meta})
+
+        except Exception as exc:
+            logger.error("Error reading node %d: %s", node, exc)
+
+    if dataset:
+        ds = Dataset.from_list(dataset)
+        tag = datetime.now().strftime("%Y%m%d_%H%M%S")
+        hub_name = f'{args.subset}_row_wise_{tag}'
+        ds.push_to_hub(hub_name)
+        logger.info("Pushed %d rows to %s", len(dataset), hub_name)
+
+    # Cleanup
+    for node in range(args.start, args.end + 1):
+        try:
+            files = fs.ls(f'{args.bucket}/{args.name}/{args.subset}/{node}/output')
+            shards = sorted(int(f.split('.')[-2].split('/')[-1]) for f in files)
+            for shard_id in shards:
+                fs.rm(f'{args.bucket}/{args.name}/{args.subset}/{node}/output/{shard_id}.json')
+        except Exception as exc:
+            logger.error("Cleanup error for node %d: %s", node, exc)

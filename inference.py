@@ -1,101 +1,116 @@
+"""
+Inference pipeline for fineweb-translation.
+
+Loads tokenized shards from GCS, runs the IndicTrans2 Flax model on TPUs
+via JAX pmap, decodes the output, and writes translated sentences back to GCS.
+
+Supports multihost TPU setups (e.g. v4-256) via jax.distributed.initialize().
+"""
+
 import os
 import jax
-# Initialize jax distributed
 jax.distributed.initialize()
+
+import argparse
+import logging
+import time
 
 import jax.numpy as jnp
 import numpy as np
-import argparse
 from flax.jax_utils import replicate
 from flax.training.common_utils import shard
-from modeling_flax_indictrans import FlaxIndicTransForConditionalGeneration
 from jax_smi import initialise_tracking
-from decode import decode, merge
 
-import json
-import nltk
-nltk.download('punkt')
-import time
-import fsspec
-from fsspec import AbstractFileSystem
+from modeling_flax_indictrans import FlaxIndicTransForConditionalGeneration
 from IndicTransTokenizer import IndicTransTokenizer, IndicProcessor
+from decode import decode, merge
+from storage import get_fs, read_json, write_json, find_shards
 
-# start tracing
+logger = logging.getLogger(__name__)
+
 initialise_tracking()
 
-local_device_count = jax.local_device_count()
 
-def find_shards(fs, bucket, name, subset, node_id):
+# ---------------------------------------------------------------------------
+# Padding
+# ---------------------------------------------------------------------------
 
-    shards = []
-    try:
-        files = fs.ls(f'{bucket}/{name}/{subset}/{node_id}/tokenized')
+def padding_fn(batch, keys_to_pad=None):
+    """Pad variable-length sequences in *batch* to the longest length.
 
-        for file in files:
-            shards.append(int(file.split('.')[-2].split('/')[-1]))
+    Returns ``None`` if any sequence exceeds 260 tokens (safety guard).
+    """
+    if keys_to_pad is None:
+        keys_to_pad = [("input_ids", 1), ("attention_mask", 0)]
 
-        shards.sort()
-        return shards
-    
-    except Exception as e:
-        print(e)
-        return []
+    batch_out = {key: list(batch[key]) for key in batch}
 
-def load_json_file(file_path):
-    with open(file_path, 'r') as f:
-        data = json.load(f)
-    return data
+    for key, pad_value in keys_to_pad:
+        lengths = [len(x) for x in batch_out[key]]
+        max_len = max(lengths)
 
-def padding_fn(
-        batch,
-        keys_to_pad=[
-                ("input_ids", 1),
-                ("attention_mask", 0),
-            ]
-        ):
+        if max_len > 260:
+            logger.warning("Skipping batch — max length %d exceeds 260", max_len)
+            return None
 
-        batch_out = {key: [] for key in batch.keys()}
-    
-        for key in batch_out.keys():
-            batch_out[key] += batch[key]
-    
-        for key, value_to_pad_with in keys_to_pad:
+        padded = []
+        for x in batch_out[key]:
+            if len(x) < max_len:
+                padded.append(
+                    np.concatenate([np.full(max_len - len(x), pad_value), np.array(x)])
+                )
+            else:
+                padded.append(np.array(x))
+        batch_out[key] = np.stack(padded)
 
-            len_list = list(map(lambda x: len(x), batch_out[key]))
-
-            padding_length = max(len_list)
-
-            if padding_length > 260:
-                
-                print(padding_length)
-
-                return None
-            
-            array_list = []
-            for i, x in enumerate(batch_out[key]):
-
-                if len(x) < padding_length:
-                    padded_array = np.concatenate([np.full((padding_length - len(x)), value_to_pad_with), np.array(x)])
-                    array_list.append(padded_array)
-                else:
-                    array_list.append(np.array(x))
-
-            batch_out[key] = np.stack(array_list)
-
-        return batch_out
+    return batch_out
 
 
-def main(model, params, data, batch_size):
-        
+# ---------------------------------------------------------------------------
+# Model setup
+# ---------------------------------------------------------------------------
+
+def load_model(model_path):
+    """Load the IndicTrans2 model and create a pmap'd generate function.
+
+    Returns (replicated_params, p_generate).
+    """
+    model = FlaxIndicTransForConditionalGeneration.from_pretrained(
+        model_path, local_files_only=True, dtype=jnp.float16,
+    )
+    logger.info("Model loaded from %s", model_path)
+
+    params = replicate(model.params)
+    logger.info("Params replicated across %d devices", jax.local_device_count())
+
+    def generate(batch, params):
+        model.params = params
+        return model.generate(
+            **batch,
+            num_beams=1,
+            num_return_sequences=1,
+            max_length=256,
+            do_sample=False,
+        ).sequences
+
+    p_generate = jax.pmap(generate)
+
+    return params, p_generate
+
+
+# ---------------------------------------------------------------------------
+# Core inference
+# ---------------------------------------------------------------------------
+
+def run_inference(p_generate, params, data, batch_size):
+    """Run model inference on a single tokenized shard."""
     t = time.time()
-    local_device_count = jax.local_device_count()
-    inputs = []
-
-    # make an extended list of input_ids, attention_mask , placeholder_entity_maps and ids and then create batches 
-    # because inference_batch_size and tokenization_batch_size may differ 
+    ldc = jax.local_device_count()
 
     row = data['row']
     _shard = data['shard']
+
+    # Flatten all tokenized batches into contiguous lists
     input_ids = []
     attention_mask = []
     _placeholder_entity_maps = []
@@ -103,224 +118,149 @@ def main(model, params, data, batch_size):
 
     for i in data['ids']:
         _ids.extend(i)
-
     for i in data['tokenized_inputs']:
         input_ids.extend(i['batch']['input_ids'])
         attention_mask.extend(i['batch']['attention_mask'])
         _placeholder_entity_maps.extend(i['placeholder_entity_maps'])
 
+    assert len(_ids) == len(input_ids) == len(attention_mask) == len(_placeholder_entity_maps)
 
-    assert len(_ids) == len(input_ids)
-    assert len(input_ids) == len(attention_mask)
-    assert len(attention_mask) == len(_placeholder_entity_maps)
-
+    # Re-batch for inference
+    inputs = []
     placeholder_entity_maps = []
     ids = []
 
     for i in range(0, len(input_ids), batch_size):
-        
-        input = {
-            "input_ids": input_ids[i : i + batch_size],
-            "attention_mask": attention_mask[i : i + batch_size]
-        }
-        
-        input = padding_fn(input)
-        if input and len(input['input_ids']) % local_device_count==0:
-            inputs.append(input)
-            placeholder_entity_maps.append(_placeholder_entity_maps[i : i + batch_size])
-            ids.append(_ids[i : i + batch_size])
+        inp = padding_fn({
+            "input_ids": input_ids[i:i + batch_size],
+            "attention_mask": attention_mask[i:i + batch_size],
+        })
+        if inp and len(inp['input_ids']) % ldc == 0:
+            inputs.append(inp)
+            placeholder_entity_maps.append(_placeholder_entity_maps[i:i + batch_size])
+            ids.append(_ids[i:i + batch_size])
 
-    del _placeholder_entity_maps
-    del _ids
+    del _placeholder_entity_maps, _ids
 
-    assert len(inputs) == len(placeholder_entity_maps)
-    assert len(placeholder_entity_maps) == len(ids)
+    assert len(inputs) == len(placeholder_entity_maps) == len(ids)
 
-    def generate(
-            batch,
-            params,
-        ):
-            model.params = params
-            return model.generate(
-                **batch,
-                num_beams=1,
-                num_return_sequences=1,
-                max_length=256,
-                do_sample=False,
-            ).sequences
-
-    p_generate = jax.pmap(generate) 
-
-    # no need to jit the generate function because in jax by default pmapped functions are jitted!
-    def run_inference_step(batch, params, run_ds):
-
+    def inference_step(batch):
         try:
             input_batch = {
                 "input_ids": shard(jnp.array(batch["input_ids"])),
-                "attention_mask": shard(jnp.array(batch["attention_mask"]))
+                "attention_mask": shard(jnp.array(batch["attention_mask"])),
             }
             output = p_generate(input_batch, params)
             output = output.block_until_ready()
-            if local_device_count != 1:
+            if ldc != 1:
                 output = output.reshape(-1, *output.shape[2:])
             else:
                 output = output[0]
-
             return output
-        
-        except Exception as e:
-            
-            print(f"!Error in inference step: {e}")
+        except Exception as exc:
+            logger.error("Inference step failed: %s", exc)
             return []
 
     outputs = []
     _placeholder_entity_maps = []
     _ids = []
 
-    for input, placeholder_entity_map, id in zip(inputs, placeholder_entity_maps, ids):
-        output = run_inference_step(input, params, None)
+    for inp, pe_map, id_list in zip(inputs, placeholder_entity_maps, ids):
+        output = inference_step(inp)
         if len(output) > 0:
             outputs.append(output.tolist())
-            _placeholder_entity_maps.append(placeholder_entity_map)
-            _ids.append(id)
+            _placeholder_entity_maps.append(pe_map)
+            _ids.append(id_list)
 
-    assert len(_placeholder_entity_maps) == len(_ids)
-    assert len(_ids) == len(outputs)
+    assert len(_placeholder_entity_maps) == len(_ids) == len(outputs)
 
-    print("Inference completed!")
-    print(time.time() - t)
-    
-    meta_data = []
-    if 'meta_data' in data.keys():
-        meta_data = data['meta_data']
+    logger.info("Inference done in %.1fs", time.time() - t)
 
-    return {'outputs' : outputs, 'placeholder_entity_maps' : _placeholder_entity_maps, 'ids' : _ids,'meta_data':meta_data ,'row' : row, 'shard': _shard}
+    meta_data = data.get('meta_data', [])
+
+    return {
+        'outputs': outputs,
+        'placeholder_entity_maps': _placeholder_entity_maps,
+        'ids': _ids,
+        'meta_data': meta_data,
+        'row': row,
+        'shard': _shard,
+    }
 
 
-def _main(shards, fs : AbstractFileSystem, model_path, bucket, name, subset, node_id, batch_size, lang):
+# ---------------------------------------------------------------------------
+# Per-node processing loop
+# ---------------------------------------------------------------------------
 
+def process_shards(shards, fs, p_generate, params, bucket, name, subset, node_id, batch_size, lang):
+    """Run inference on each shard, decode, and save output."""
     ip = IndicProcessor(inference=True)
     tokenizer = IndicTransTokenizer(direction='en-indic')
 
-    for i in shards:
+    for shard_id in shards:
+        data = read_json(fs, f'{bucket}/{name}/{subset}/{node_id}/tokenized/{shard_id}.json')
 
-        with fs.open(f'{bucket}/{name}/{subset}/{node_id}/tokenized/{i}.json', 'r') as f:
-            data = json.load(f)
-
-        model = FlaxIndicTransForConditionalGeneration.from_pretrained(model_path, local_files_only=True,dtype=jnp.float16,)
-        print("model loaded!")
-
-        params = replicate(model.params)
-        print("model replicated!")
-
-        output = main(model, params, data, batch_size)
-
+        output = run_inference(p_generate, params, data, batch_size)
         sentences = decode(output, ip, tokenizer, lang)
+        sentences = merge(
+            sentences['sentences'], sentences['ids'],
+            sentences['meta_data'], sentences['row'], sentences['shard'],
+        )
 
-        sentences = merge(sentences['sentences'], sentences['ids'],sentences['meta_data'], sentences['row'], sentences['shard'])
+        write_json(fs, f'{bucket}/{name}/{subset}/{node_id}/output/{shard_id}.json', sentences)
+        fs.rm(f'{bucket}/{name}/{subset}/{node_id}/tokenized/{shard_id}.json')
 
-        with fs.open(f'{bucket}/{name}/{subset}/{node_id}/output/{i}.json', 'w') as f:
-            json.dump(sentences, f)
-
-        fs.rm(f'{bucket}/{name}/{subset}/{node_id}/tokenized/{i}.json')
-            
         del data, sentences
 
-if __name__ =='__main__':
 
-    parser = argparse.ArgumentParser(description="Tanslate tokenized sentences")
+# ---------------------------------------------------------------------------
+# CLI entrypoint
+# ---------------------------------------------------------------------------
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Translate tokenized sentences using IndicTrans2")
     parser.add_argument("--name", type=str, required=True)
-    parser.add_argument("--subset", type=str, default=None, required=True)
-    parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
-    parser.add_argument("--tokenization_batch_size", type=int, default=64, required=False)
+    parser.add_argument("--subset", type=str, required=True)
+    parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--bucket", type=str, required=True)
     parser.add_argument("--node_id", type=int, default=-1)
     parser.add_argument("--total_nodes", type=int, default=-1)
     parser.add_argument("--lang", type=str, required=True)
+    parser.add_argument("--log_level", default="INFO",
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR"])
 
     args = parser.parse_args()
-    name = args.name
-    subset = args.subset
-    batch_size = args.batch_size
-    bucket = args.bucket
-    node_id = args.node_id
-    total_nodes = args.total_nodes
-    lang = args.lang
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
-    fs : AbstractFileSystem = fsspec.core.url_to_fs(bucket)[0]
-
+    fs = get_fs(args.bucket)
     pid = jax.process_index()
-    print(pid)
-    
-    global_devices = jax.device_count()
-    local_devices = jax.local_device_count()
-    process_count = jax.process_count()
+    logger.info("JAX process index: %d", pid)
 
-    # print(global_devices)
-    
     curr_dir = os.getcwd()
     model_path = f'{curr_dir}/flax_weights/200m'
-    
+
     if not os.path.isdir(model_path):
-        os.system("mkdir flax_weights")
-        os.system(f'gsutil cp -R {bucket}/IndicTrans2/flax_weights/200m {curr_dir}/flax_weights/')
+        os.makedirs('flax_weights', exist_ok=True)
+        os.system(f'gsutil cp -R {args.bucket}/IndicTrans2/flax_weights/200m {curr_dir}/flax_weights/')
 
-    curr_shard = 1
+    # Load model and create pmap'd generate — once for all shards
+    params, p_generate = load_model(model_path)
 
-    if node_id == -1 and total_nodes == -1:
-        node_id = pid 
-        total_nodes = process_count
+    node_id = args.node_id if args.node_id != -1 else pid
+    total_nodes = args.total_nodes if args.total_nodes != -1 else jax.process_count()
 
-    shards = find_shards(fs, bucket, name, subset, node_id)
-    _shards = []
+    shard_list = find_shards(fs, args.bucket, args.name, args.subset, node_id)
 
-    while(len(shards) > 0):
+    while shard_list:
+        logger.info("Processing shards: %s", shard_list)
+        process_shards(
+            shard_list, fs, p_generate, params, args.bucket,
+            args.name, args.subset, node_id, args.batch_size, args.lang,
+        )
 
-        print(shards)
-        _main(shards, fs, model_path, bucket, name, subset, node_id, batch_size, lang)
-
-        _shards = find_shards(fs, bucket, name, subset, node_id)
-        
-        updated_shards = []
-        for _shard in _shards:
-            if _shard not in shards:
-                updated_shards.append(_shard)
-
-        shards = updated_shards[:]
-        updated_shards = []
-        _shards = []
-
-
-    # shards = []
-
-    # for i in shards:
-
-    #     if fs.isfile(f'{bucket}/{name}/{subset}/{i}/sentences.json'):
-    #         continue
-
-    #     if fs.isfile(f'{bucket}/{name}/{subset}/{i}/data.json'):
-    #         with fs.open(f'{bucket}/{name}/{subset}/{i}/data.json', 'r') as f:
-    #             data = json.load(f)
-    #     else:
-    #         continue
-
-    #     model = FlaxIndicTransForConditionalGeneration.from_pretrained(model_path, local_files_only=True,dtype=jnp.float16,)
-    #     print("model loaded!")
-    #     params = replicate(model.params)
-    #     print("model replicated!")
-
-    #     output = main(model, params, data, batch_size)
-
-    #     sentences = decode(output, ip, tokenizer, lang)
-
-    #     sentences = merge(sentences['sentences'], sentences['ids'],sentences['meta_data'], sentences['row'], sentences['shard'])
-
-    #     with fs.open(f'{bucket}/{name}/{subset}/{i}/sentences.json', 'w') as f:
-    #         json.dump(sentences, f)
-            
-    #     with fs.open(f'{bucket}/{name}/{subset}/{i}/data.json', 'w') as f:
-    #         json.dump({'row':data['row'], 'shard':data['shard']}, f)
-
-    #     del model, params, data, sentences
-
-    
+        # Check for newly arrived shards
+        new_shards = find_shards(fs, args.bucket, args.name, args.subset, node_id)
+        shard_list = [s for s in new_shards if s not in shard_list]

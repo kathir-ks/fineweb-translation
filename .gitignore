@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.pyo
+flax_weights/
+IndicTransTokenizer/
+*.egg-info/

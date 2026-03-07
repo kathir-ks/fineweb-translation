@@ -1,135 +1,113 @@
-import re
+"""
+Tokenization pipeline for the fineweb-translation project.
+
+Streams the FineWeb-Edu dataset, splits documents into sentences,
+tokenizes them with IndicTransTokenizer, and writes shards to GCS.
+
+Supports multiprocessing (one process per parquet file) and resume
+via per-file checkpoints on GCS.
+
+Usage example
+-------------
+    python tokenization_parallel.py \
+        --name HuggingFaceFW/fineweb-edu \
+        --subset sample-10BT \
+        --src_lang eng_Latn --tgt_lang hin_Deva \
+        --tokenization_batch_size 64 \
+        --bucket gs://my-bucket \
+        --shard_size 64000 \
+        --total_nodes 4 \
+        --total_files 10
+"""
+
 import argparse
-import nltk
-nltk.download('punkt')
-
-# from nltk.tokenize import sent_tokenize
-from unicodedata import normalize
-from datasets import load_dataset
-from IndicTransTokenizer import IndicTransTokenizer, IndicProcessor
-import os
-import json
-import signal
-import fsspec
-from fsspec import AbstractFileSystem
+import logging
+from multiprocessing import Pool
 
 from datasets import load_dataset
 from IndicTransTokenizer import IndicTransTokenizer, IndicProcessor
-from multiprocessing import Pool, cpu_count
+
+from utils import split_into_sentences, preprocess_and_tokenize
+from storage import (
+    get_fs,
+    write_tokenized_shard,
+    save_tokenization_checkpoint,
+    load_tokenization_checkpoint,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 def parse_args():
-
-    parser = argparse.ArgumentParser(description="Performs preprocessing and tokenization for fineweb")
-    parser.add_argument("--name", default="HuggingFaceFW/fineweb-edu")
-    parser.add_argument("--subset", type=str, required=True, help='subset of the dataset')
-    parser.add_argument("--streaming", default=True, type=bool, required=False, help='whether to stream or download the dataset')
-    parser.add_argument("--src_lang", type=str, required=True, help='source language (i.e) the language of the dataset')
-    parser.add_argument("--tgt_lang", type=str, required=True, help='target language')
-    parser.add_argument("--tokenization_batch_size", type=int, required=True, help='batch size to perform tokenization')
-    parser.add_argument("--bucket", type=str, required=True, help='gcs bucket to store the shards')
-    parser.add_argument("--rows_per_shard", type=int, default=1000, required=False, help='no of rows per shard')
-    parser.add_argument("--shard_size", type=int,default=64000, required=False, help='sharding based on no of sentences')
-    parser.add_argument("--resume",type=bool , required=False, default=False)
-    parser.add_argument("--total_nodes", type=int, required=True, help="to split the shards based on the no of nodes")
-    parser.add_argument("--total_files", type=int, required=True)
-
-    args = parser.parse_args()
-    return args
-
-# timeout handler
-def timeout_handler(signum, frame):
-    raise TimeoutError("Function call timed out")
-
-signal.signal(signal.SIGALRM, timeout_handler)
-
-# Decorator to apply timeout
-def timeout(seconds):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            signal.alarm(seconds)  # Set the alarm
-            try:
-                result = func(*args, **kwargs)
-            finally:
-                signal.alarm(0)  # Disable the alarm
-            return result
-        return wrapper
-    return decorator
+    parser = argparse.ArgumentParser(
+        description="Preprocess and tokenize FineWeb-Edu for IndicTrans2 translation",
+    )
+    parser.add_argument("--name", default="HuggingFaceFW/fineweb-edu",
+                        help="HuggingFace dataset name")
+    parser.add_argument("--subset", type=str, required=True,
+                        help="Subset of the dataset")
+    parser.add_argument("--streaming", default=True, type=bool,
+                        help="Whether to stream the dataset")
+    parser.add_argument("--src_lang", type=str, required=True,
+                        help="Source language code (e.g. eng_Latn)")
+    parser.add_argument("--tgt_lang", type=str, required=True,
+                        help="Target language code (e.g. hin_Deva)")
+    parser.add_argument("--tokenization_batch_size", type=int, required=True,
+                        help="Batch size for tokenization")
+    parser.add_argument("--bucket", type=str, required=True,
+                        help="GCS bucket URI to store shards")
+    parser.add_argument("--shard_size", type=int, default=64000,
+                        help="Number of sentences per shard")
+    parser.add_argument("--resume", type=bool, default=False,
+                        help="Resume from last checkpoint")
+    parser.add_argument("--total_nodes", type=int, required=True,
+                        help="Number of inference nodes (for shard partitioning)")
+    parser.add_argument("--total_files", type=int, required=True,
+                        help="Total number of parquet files in the dataset")
+    parser.add_argument("--log_level", default="INFO",
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+                        help="Logging level")
+    return parser.parse_args()
 
 
-def save_data(subset, shard, data):
-     
-     with open(f'{subset}_{shard}.json', 'w') as f:
-          json.dump(data, f)
-
-def save_data_and_push_to_gcs(subset, shard, data, bucket):
-     
-    with open(f'{subset}_{shard}.json', 'w') as f:
-        json.dump(data, f)
-    
-    cwd = os.getcwd()
-    # push the file to gcs
-    os.system(f'gsutil cp {subset}_{shard}.json {bucket}/{subset}/')
-    # remove the file from disk
-    os.system(f'rm {subset}_{shard}.json')
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
 
 def load_data(name, subset, streaming, file_no, total_files, split="train"):
-    
-    data =  load_dataset(name, data_files={f'data/{subset}/train-{str(file_no).zfill(5)}-of-{str(total_files).zfill(5)}.parquet'}, streaming=streaming, split=split)
-    # data = data['text']
-    return data
-
-# ref: https://github.com/AI4Bharat/setu-translate/blob/433723c52678cb79e54a04749e3d8a58737a2b35/stages/document.py#L75
-
-def clean_string(s):  
-    
-        # Remove all symbols and numbers from beginning and end of the string
-        stripped_s = s.strip("@#$^&*-_+=[]{}|\\<>/\n")
-        stripped_s = stripped_s.strip() # Stripping left-over whitespaces if any
-
-        # Strip all types of bullet points
-        pattern = r'^\s*(\•|\○|\*|\-|[0-9]+\.)\s*'
-        stripped_s = re.sub(pattern, '', stripped_s)
-        stripped_s = stripped_s.strip() # Stripping left-over whitespaces if any
-
-        return stripped_s
-
-def split_with_delimiter(
-        text,
-        # delimiter_pattern=r'[.?!।|॥؟۔](?:\n+)?'
-        delimiter_pattern=r'(?<!\d)\.(?!\d)|(?<!\w)\.(?!\w)|[?!।|॥؟۔\n](?:\n+)?', 
-    ):
-        lines = re.split(f'({delimiter_pattern})', text)
-        if len(lines) % 2 == 0:
-            iter_range = range(0, len(lines), 2)
-            out = [lines[i]+lines[i+1] for i in iter_range]
-        else:
-            iter_range = range(0, len(lines) - 1, 2)
-            out = [lines[i]+lines[i+1] for i in iter_range] + [lines[-1]]
-        return out 
-
-def split_into_sentences(text, method="regex"):
-        split_methods = {
-            "regex": split_with_delimiter,
-        }
-        text = normalize('NFKC', text).lower()
-        sents = [clean_string(sent.text if not isinstance(sent, str) else sent) for sent in split_methods[method](text) if len(sent)]
-        sents = [sent for sent in sents if len(sent)]
-        # return remove_duplicate_string(sents)
-        return sents
-
-@timeout(1)
-def preprocess_and_tokenize(tokenizer, ip, batch, src_lang, tgt_lang):
-    
-    batch = ip.preprocess_batch(batch, src_lang=src_lang, tgt_lang=tgt_lang)
-    batch = tokenizer(batch, padding="longest", truncation=True, max_length=256,src=True, return_tensors="pt",return_attention_mask=True)
-    batch = {key: value.tolist() for key, value in batch.items()}
-    placeholder_entity_maps = ip.get_placeholder_entity_maps(clear_ple_maps=True)
-    return {"batch":batch, "placeholder_entity_maps":placeholder_entity_maps}
+    """Load a single parquet file from the dataset by index."""
+    padded_file = str(file_no).zfill(5)
+    padded_total = str(total_files).zfill(5)
+    data_files = {f'data/{subset}/train-{padded_file}-of-{padded_total}.parquet'}
+    return load_dataset(
+        name, data_files=data_files, streaming=streaming, split=split,
+    )
 
 
+# ---------------------------------------------------------------------------
+# Per-shard tokenization
+# ---------------------------------------------------------------------------
 
-def _main(sentences, temp_ids, meta_data, src_lang, tgt_lang, tokenization_batch_size, name, subset, bucket, shard, total_nodes, fs, row):
-
+def tokenize_shard(
+    sentences,
+    temp_ids,
+    meta_data,
+    src_lang,
+    tgt_lang,
+    tokenization_batch_size,
+    name,
+    subset,
+    bucket,
+    shard,
+    total_nodes,
+    fs,
+    row,
+):
+    """Tokenize a shard of sentences and write the result to GCS."""
     tokenized_inputs = []
     ids = []
 
@@ -137,26 +115,45 @@ def _main(sentences, temp_ids, meta_data, src_lang, tgt_lang, tokenization_batch
 
     ip = IndicProcessor(inference=True)
     tokenizer = IndicTransTokenizer(direction='en-indic')
-    
+
     for i in range(0, len(sentences), tokenization_batch_size):
-        try:    
-            tokenized_inputs.append(preprocess_and_tokenize(tokenizer, ip, sentences[i : i + tokenization_batch_size], src_lang, tgt_lang))
-            ids.append(temp_ids[i : i + tokenization_batch_size])
-        except TimeoutError as e:
+        try:
+            tokenized_inputs.append(
+                preprocess_and_tokenize(
+                    tokenizer, ip,
+                    sentences[i:i + tokenization_batch_size],
+                    src_lang, tgt_lang,
+                )
+            )
+            ids.append(temp_ids[i:i + tokenization_batch_size])
+        except TimeoutError as exc:
             ip.get_placeholder_entity_maps(clear_ple_maps=True)
-            print(e)
-    
-    assert len(tokenized_inputs)  == len(ids)
+            logger.warning("Tokenization timed out at offset %d: %s", i, exc)
 
-    data = {'tokenized_inputs':tokenized_inputs, "ids":ids, "row": row, "shard":shard, 'meta_data':meta_data}
+    assert len(tokenized_inputs) == len(ids)
 
-    with fs.open(f'{bucket}/{name}/{subset}/{shard % total_nodes}/tokenized/{shard}.json' ,'w') as f:
-        json.dump(data, f)
+    data = {
+        'tokenized_inputs': tokenized_inputs,
+        'ids': ids,
+        'row': row,
+        'shard': shard,
+        'meta_data': meta_data,
+    }
+    write_tokenized_shard(fs, bucket, name, subset, shard, total_nodes, data)
 
 
-def process_file(args):
-    name, subset, src_lang, tgt_lang, streaming, tokenization_batch_size, bucket, shard_size, total_nodes, file_no, total_files, resume = args
-    
+# ---------------------------------------------------------------------------
+# Per-file worker (one per multiprocessing.Pool process)
+# ---------------------------------------------------------------------------
+
+def process_file(args_tuple):
+    """Process a single parquet file: split into sentences, tokenize, shard."""
+    (
+        name, subset, src_lang, tgt_lang, streaming,
+        tokenization_batch_size, bucket, shard_size,
+        total_nodes, file_no, total_files, resume,
+    ) = args_tuple
+
     sentences = []
     temp_ids = []
     meta_data = []
@@ -165,20 +162,19 @@ def process_file(args):
     shard_start = file_no * 2500 + 1
     shard = shard_start
     tokenized_rows = 0
-    fs: AbstractFileSystem = fsspec.core.url_to_fs(bucket)[0]
 
-    # Check if we need to resume
-    
-    meta_file_path = f'{bucket}/{name}/{subset}/tokenization_meta_data_{file_no}.json'
-    if fs.exists(meta_file_path):
+    fs = get_fs(bucket)
+
+    # --- Resume from checkpoint if available ---
+    checkpoint = load_tokenization_checkpoint(fs, bucket, name, subset, file_no)
+    if checkpoint is not None:
         resume = True
-        with fs.open(meta_file_path, 'r') as f:
-            resume_data = json.load(f)
-            tokenized_rows = resume_data['row']
-            shard = resume_data['shard']
-            print(f"Resuming file {file_no} from row {row}, shard {shard}")
+        tokenized_rows = checkpoint['row']
+        shard = checkpoint['shard']
 
+    # --- Stream the parquet file ---
     data = load_data(name, subset, streaming, file_no, total_files)
+
     for d in data:
         if resume and row < (tokenized_rows - 1):
             row += 1
@@ -186,60 +182,75 @@ def process_file(args):
 
         sents = split_into_sentences(d['text'])
         temp_ids.extend([d['id']] * len(sents))
-        meta_data.append({'id': d['id'], 'dump': d['dump'], 'url': d['url'], 'file_path': d['file_path']})
+        meta_data.append({
+            'id': d['id'], 'dump': d['dump'],
+            'url': d['url'], 'file_path': d['file_path'],
+        })
         sentences.extend(sents)
         row += 1
 
         if len(sentences) >= shard_size:
-            _main(sentences[:shard_size], temp_ids[:shard_size], meta_data, src_lang, tgt_lang, tokenization_batch_size, name, subset, bucket, shard, total_nodes, fs, row)
+            tokenize_shard(
+                sentences[:shard_size], temp_ids[:shard_size], meta_data,
+                src_lang, tgt_lang, tokenization_batch_size,
+                name, subset, bucket, shard, total_nodes, fs, row,
+            )
             sentences = sentences[shard_size:]
             temp_ids = temp_ids[shard_size:]
-            if len(temp_ids) > 0:
-                meta_data = [meta_data[-1]]
-            else:
-                meta_data = []
-            
+            meta_data = [meta_data[-1]] if temp_ids else []
+
             assert len(sentences) == len(temp_ids)
-            if len(meta_data) > 0:
+            if meta_data:
                 assert meta_data[0]['id'] == temp_ids[0]
                 assert meta_data[0]['id'] == temp_ids[-1]
             shard += 1
 
+        # Periodic checkpoint
         if row % 1000 == 0:
-            with fs.open(f'{bucket}/{name}/{subset}/tokenization_meta_data_{file_no}.json', 'w') as f:
-                json.dump({'row': row, 'shard': shard, 'file': file_no}, f)
+            save_tokenization_checkpoint(
+                fs, bucket, name, subset, file_no, row, shard,
+            )
 
-    # Process any remaining sentences
+    # Flush remaining sentences
     if sentences:
-        _main(sentences, temp_ids, meta_data, src_lang, tgt_lang, tokenization_batch_size, name, subset, bucket, shard, total_nodes, fs, row)
+        tokenize_shard(
+            sentences, temp_ids, meta_data,
+            src_lang, tgt_lang, tokenization_batch_size,
+            name, subset, bucket, shard, total_nodes, fs, row,
+        )
 
-    # Final update to meta_data
-    with fs.open(f'{bucket}/{name}/{subset}/tokenization_meta_data_{file_no}.json', 'w') as f:
-        json.dump({'row': row, 'shard': shard, 'file': file_no}, f)
+    # Final checkpoint
+    save_tokenization_checkpoint(fs, bucket, name, subset, file_no, row, shard)
+    logger.info("File %d complete — final shard %d, rows %d", file_no, shard, row)
+
+
+# ---------------------------------------------------------------------------
+# Entrypoint
+# ---------------------------------------------------------------------------
 
 def main(args):
-    name = args.name
-    subset = args.subset
-    src_lang = args.src_lang
-    tgt_lang = args.tgt_lang
-    streaming = args.streaming
-    tokenization_batch_size = args.tokenization_batch_size
-    bucket = args.bucket
-    shard_size = args.shard_size
-    total_nodes = args.total_nodes
-    total_files = args.total_files
-    resume = args.resume
+    process_args = [
+        (
+            args.name, args.subset, args.src_lang, args.tgt_lang,
+            args.streaming, args.tokenization_batch_size,
+            args.bucket, args.shard_size, args.total_nodes,
+            i, args.total_files, args.resume,
+        )
+        for i in range(args.total_files)
+    ]
 
-    # Prepare arguments for multiprocessing
-    process_args = [(name, subset, src_lang, tgt_lang, streaming, tokenization_batch_size, 
-                     bucket, shard_size, total_nodes, i, total_files, resume) 
-                    for i in range(total_files)]
-
-    # Use multiprocessing to process all files concurrently
-    # Create a process for each file, regardless of CPU count
-    with Pool(processes=total_files) as pool:
+    logger.info(
+        "Starting tokenization — %d files, pool size %d",
+        args.total_files, args.total_files,
+    )
+    with Pool(processes=args.total_files) as pool:
         pool.map(process_file, process_args)
+
 
 if __name__ == '__main__':
     args = parse_args()
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
     main(args)

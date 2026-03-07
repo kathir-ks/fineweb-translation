@@ -1,137 +1,143 @@
-import os
-import json
+"""
+Decoding and sentence-merging for the fineweb-translation pipeline.
+
+Takes raw model output tokens, decodes them via IndicTransTokenizer,
+and reconstructs per-document translated text by merging sentences
+that share the same document UUID.
+"""
+
 import argparse
-import fsspec
-from fsspec import AbstractFileSystem
+import json
+import logging
+
 import numpy as np
 
-from IndicTransTokenizer import IndicTransTokenizer , IndicProcessor
+from IndicTransTokenizer import IndicTransTokenizer, IndicProcessor
+from storage import get_fs, read_json, write_json
 
-def decode(data , ip : IndicProcessor, tokenizer : IndicTransTokenizer, lang : str):
-    
-    assert len(data['outputs']) == len(data['ids'])
-    assert len(data['ids']) == len(data['placeholder_entity_maps'])
-    
-    row = data['row']
-    shard = data['shard']
-    ids = data['ids']
-    
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Core logic
+# ---------------------------------------------------------------------------
+
+def decode(data, ip: IndicProcessor, tokenizer: IndicTransTokenizer, lang: str):
+    """Decode output token arrays back to text for a single shard."""
+    assert len(data['outputs']) == len(data['ids']) == len(data['placeholder_entity_maps'])
+
     sentences = []
-    for output, placeholder_entity_map in zip(data['outputs'], data['placeholder_entity_maps']):
+    for output, pe_map in zip(data['outputs'], data['placeholder_entity_maps']):
         output = tokenizer.batch_decode(np.asarray(output), src=False)
-        output = ip.postprocess_batch(output, lang=lang, placeholder_entity_maps=placeholder_entity_map)
+        output = ip.postprocess_batch(output, lang=lang, placeholder_entity_maps=pe_map)
         sentences.append(output)
 
-    return {'sentences': sentences, 'ids':ids, 'row':row, 'shard':shard,'meta_data': data['meta_data']}
+    return {
+        'sentences': sentences,
+        'ids': data['ids'],
+        'row': data['row'],
+        'shard': data['shard'],
+        'meta_data': data['meta_data'],
+    }
 
-def merge(_sentences, _ids,_meta_data, row, shard):
-    sentences = []
-    for sentence in _sentences:
-        sentences.extend(sentence)
-    
-    ids = []
-    for id in _ids:
-        ids.extend(id)
+
+def merge(_sentences, _ids, _meta_data, row, shard):
+    """Merge sentence-level translations back into per-document text."""
+    sentences = [s for batch in _sentences for s in batch]
+    ids = [i for batch in _ids for i in batch]
 
     assert len(sentences) == len(ids)
 
+    meta_lookup = {md['id']: md for md in _meta_data}
+
     uuid = []
     text = []
-    prev_uuid = -1
     meta_data = []
-    meta_data_lookup = {}
-    for md in _meta_data:
-        meta_data_lookup[md['id']] = md
+    prev_uuid = None
 
-    for sentence, id in zip(sentences, ids):
-        if id == prev_uuid:
+    for sentence, doc_id in zip(sentences, ids):
+        if doc_id == prev_uuid:
             text[-1].append(sentence)
         else:
-            prev_uuid = id
+            prev_uuid = doc_id
             text.append([sentence])
-            uuid.append(id)
-            if len(meta_data_lookup.keys()) > 0:
-                print(1)
-                meta_data.append(meta_data_lookup[id])
+            uuid.append(doc_id)
+            if meta_lookup:
+                meta_data.append(meta_lookup[doc_id])
 
     assert len(text) == len(uuid)
-    if len(_meta_data) > 0:
+    if _meta_data:
         assert len(meta_data) == len(text)
-    
-    return {'text':text, 'uuid':uuid, 'row':row, 'shard':shard, 'meta_data':meta_data}
-    
+
+    return {
+        'text': text, 'uuid': uuid,
+        'row': row, 'shard': shard,
+        'meta_data': meta_data,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Standalone CLI
+# ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    
-    parser = argparse.ArgumentParser(description="Decode the output tokens to the desired language using indictranstokenizer")
-    parser.add_argument("--name", type=str, required=True, help='name of the dataset huggingface')
-    parser.add_argument("--subset", type=str, required=True, help='subset of the dataset')
-    parser.add_argument("--direction", type=str, required=False, default='en-indic', help='direction of the indictranstokenizer')
-    parser.add_argument("--lang", type=str, required=True, help='the target lanaguage')  # the IndicTransTokenizer only needs the target language
-    parser.add_argument("--bucket", type=str, required=True, help='the gcs bucket in which the data is present')
-    parser.add_argument("--resume", type=bool, default=False, required=False)
-    parser.add_argument("--_from",type=int)
-    parser.add_argument("--to", type=int)
+    parser = argparse.ArgumentParser(
+        description="Decode output tokens to target language using IndicTransTokenizer",
+    )
+    parser.add_argument("--name", type=str, required=True, help="HuggingFace dataset name")
+    parser.add_argument("--subset", type=str, required=True, help="Dataset subset")
+    parser.add_argument("--direction", type=str, default='en-indic',
+                        help="IndicTransTokenizer direction")
+    parser.add_argument("--lang", type=str, required=True, help="Target language code")
+    parser.add_argument("--bucket", type=str, required=True, help="GCS bucket URI")
+    parser.add_argument("--resume", type=bool, default=False)
+    parser.add_argument("--_from", type=int, required=True, help="Start shard index")
+    parser.add_argument("--to", type=int, required=True, help="End shard index")
+    parser.add_argument("--log_level", default="INFO",
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR"])
 
     args = parser.parse_args()
+    logging.basicConfig(
+        level=getattr(logging, args.log_level),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
-    name = args.name
-    subset = args.subset
-    direction = args.direction
-    lang = args.lang
-    bucket = args.bucket
-    resume = args.resume
-    _from = args._from
-    to = args.to
-    
-    fs : AbstractFileSystem = fsspec.core.url_to_fs(bucket)[0]
-
-    files = fs.ls(f'{bucket}/{name}/{subset}')
-
+    fs = get_fs(args.bucket)
+    files = fs.ls(f'{args.bucket}/{args.name}/{args.subset}')
     total_shards = len(files)
+
     curr_shard = 1
-
-    # perform a binary search to reach the files that are yet to be decoded
-    if resume:
-
-        left = curr_shard
-        right = total_shards
-
-        while(left<=right):
-            mid = left + int((right - left)/2)
-            if fs.isfile(f'{bucket}/{name}/{subset}/{mid}/sentences.json'):
+    if args.resume:
+        left, right = curr_shard, total_shards
+        while left <= right:
+            mid = left + (right - left) // 2
+            if fs.isfile(f'{args.bucket}/{args.name}/{args.subset}/{mid}/sentences.json'):
                 left = mid + 1
-            else: 
-                right = mid -1
-        
+            else:
+                right = mid - 1
         curr_shard = left
 
-    print(curr_shard)
+    logger.info("Starting decode from shard %d", curr_shard)
+
     ip = IndicProcessor(inference=True)
-    tokenizer = IndicTransTokenizer(direction=direction)
+    tokenizer = IndicTransTokenizer(direction=args.direction)
 
-    if to > total_shards:
-        to = total_shards
-     
-    for i in range(_from, to + 1, 1):
+    end = min(args.to, total_shards)
 
+    for i in range(args._from, end + 1):
         try:
-            with fs.open(f'{bucket}/{name}/{subset}/{i}/output.json', 'r') as f:
-                output = json.load(f)
-
-            if len(output) == 0:
+            output = read_json(fs, f'{args.bucket}/{args.name}/{args.subset}/{i}/output.json')
+            if not output:
                 continue
 
-            sentences = decode(output, ip, tokenizer, lang)
+            sentences = decode(output, ip, tokenizer, args.lang)
+            sentences = merge(
+                sentences['sentences'], sentences['ids'],
+                sentences['meta_data'], sentences['row'], sentences['shard'],
+            )
 
-            sentences = merge(sentences['sentences'], sentences['ids'],sentences['meta_data'] , sentences['row'], sentences['shard'])
+            write_json(fs, f'{args.bucket}/{args.name}/{args.subset}/{i}/sentences.json', sentences)
+            write_json(fs, f'{args.bucket}/{args.name}/{args.subset}/{i}/output.json', [])
 
-            with fs.open(f'{bucket}/{name}/{subset}/{i}/sentences.json', 'w') as f:
-                json.dump(sentences, f) 
-            
-            # empyt the output file
-            with fs.open(f'{bucket}/{name}/{subset}/{i}/output.json', 'w') as f:
-                json.dump([], f)
-
-        except:
-            print(f'The file {bucket}/{name}/{subset}/{i}/output.json is not available')
+        except Exception as exc:
+            logger.error("Failed to decode shard %d: %s", i, exc)

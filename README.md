@@ -69,7 +69,8 @@ python3 tokenization_parallel.py \
     --bucket gs://my-bucket \
     --shard_size 64000 \
     --total_nodes 4 \
-    --total_files 10
+    --total_files 99 \
+    --start_file 0 --end_file 10
 ```
 
 ### 2. Inference
@@ -127,7 +128,8 @@ Launcher scripts that create TPU VMs, set up the environment, and handle preempt
     --dataset HuggingFaceFW/fineweb-edu --subset sample-10BT \
     --src_lang eng_Latn --tgt_lang hin_Deva \
     --tokenization_batch_size 64 --shard_size 64000 \
-    --total_nodes 4 --total_files 10
+    --total_nodes 4 --total_files 99 \
+    --start_file 0 --end_file 10
 ```
 
 ## Project structure

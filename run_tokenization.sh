@@ -8,7 +8,8 @@
 #       --dataset HuggingFaceFW/fineweb-edu --subset sample-10BT \
 #       --src_lang eng_Latn --tgt_lang hin_Deva \
 #       --tokenization_batch_size 64 --shard_size 64000 \
-#       --total_nodes 4 --total_files 10
+#       --total_nodes 4 --total_files 99 \
+#       --start_file 0 --end_file 10
 
 set -euo pipefail
 
@@ -29,6 +30,8 @@ while [[ "$#" -gt 0 ]]; do
         --shard_size) shard_size="$2"; shift ;;
         --total_nodes) total_nodes="$2"; shift ;;
         --total_files) total_files="$2"; shift ;;
+        --start_file) start_file="$2"; shift ;;
+        --end_file) end_file="$2"; shift ;;
         --no-preemptible) preemptible=false ;;
         *) echo "Unknown parameter: $1"; exit 1 ;;
     esac
@@ -75,14 +78,21 @@ while true; do
     fi
 
     echo "Starting tokenization on '$vm_name'..."
-    if gcloud compute tpus tpu-vm ssh "$vm_name" --zone="$region" --command="
-        cd fineweb-translation && python3 tokenization_parallel.py \
+    tok_cmd="cd fineweb-translation && python3 tokenization_parallel.py \
             --name $dataset --subset $subset \
             --src_lang $src_lang --tgt_lang $tgt_lang \
             --tokenization_batch_size $tokenization_batch_size \
             --bucket $bucket --shard_size $shard_size \
             --resume True --total_nodes $total_nodes \
-            --total_files $total_files"; then
+            --total_files $total_files"
+    if [ -n "${start_file:-}" ]; then
+        tok_cmd="$tok_cmd --start_file $start_file"
+    fi
+    if [ -n "${end_file:-}" ]; then
+        tok_cmd="$tok_cmd --end_file $end_file"
+    fi
+
+    if gcloud compute tpus tpu-vm ssh "$vm_name" --zone="$region" --command="$tok_cmd"; then
         echo "Tokenization completed successfully"
         break
     else

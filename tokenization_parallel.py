@@ -17,7 +17,8 @@ Usage example
         --bucket gs://my-bucket \
         --shard_size 64000 \
         --total_nodes 4 \
-        --total_files 10
+        --total_files 99 \
+        --start_file 0 --end_file 10
 """
 
 import argparse
@@ -68,6 +69,10 @@ def parse_args():
                         help="Number of inference nodes (for shard partitioning)")
     parser.add_argument("--total_files", type=int, required=True,
                         help="Total number of parquet files in the dataset")
+    parser.add_argument("--start_file", type=int, default=0,
+                        help="First file index to process (inclusive, default 0)")
+    parser.add_argument("--end_file", type=int, default=None,
+                        help="Last file index to process (exclusive, default total_files)")
     parser.add_argument("--log_level", default="INFO",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
                         help="Logging level")
@@ -229,6 +234,10 @@ def process_file(args_tuple):
 # ---------------------------------------------------------------------------
 
 def main(args):
+    start = args.start_file
+    end = args.end_file if args.end_file is not None else args.total_files
+    num_files = end - start
+
     process_args = [
         (
             args.name, args.subset, args.src_lang, args.tgt_lang,
@@ -236,14 +245,14 @@ def main(args):
             args.bucket, args.shard_size, args.total_nodes,
             i, args.total_files, args.resume,
         )
-        for i in range(args.total_files)
+        for i in range(start, end)
     ]
 
     logger.info(
-        "Starting tokenization — %d files, pool size %d",
-        args.total_files, args.total_files,
+        "Starting tokenization — files %d to %d (%d files), pool size %d",
+        start, end - 1, num_files, num_files,
     )
-    with Pool(processes=args.total_files) as pool:
+    with Pool(processes=num_files) as pool:
         pool.map(process_file, process_args)
 
 

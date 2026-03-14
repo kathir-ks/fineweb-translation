@@ -68,7 +68,7 @@ def parse_args():
     parser.add_argument("--total_nodes", type=int, required=True,
                         help="Number of inference nodes (for shard partitioning)")
     parser.add_argument("--total_files", type=int, required=True,
-                        help="Total number of parquet files in the dataset")
+                        help="Number of shards to split the dataset into")
     parser.add_argument("--start_file", type=int, default=0,
                         help="First file index to process (inclusive, default 0)")
     parser.add_argument("--end_file", type=int, default=None,
@@ -84,13 +84,16 @@ def parse_args():
 # ---------------------------------------------------------------------------
 
 def load_data(name, subset, streaming, file_no, total_files, split="train"):
-    """Load a single parquet file from the dataset by index."""
-    padded_file = str(file_no).zfill(5)
-    padded_total = str(total_files).zfill(5)
-    data_files = {f'data/{subset}/train-{padded_file}-of-{padded_total}.parquet'}
-    return load_dataset(
-        name, data_files=data_files, streaming=streaming, split=split,
+    """Load a single parquet shard from the dataset by index.
+
+    Uses the HuggingFace named config (subset) so the correct data_files
+    are resolved automatically, then selects a single shard by index.
+    """
+    ds = load_dataset(
+        name, subset, streaming=streaming, split=split,
     )
+    # When streaming, shard() picks every total_files-th example starting at file_no
+    return ds.shard(num_shards=total_files, index=file_no)
 
 
 # ---------------------------------------------------------------------------

@@ -80,7 +80,7 @@ def load_model(model_path):
     )
     logger.info("Model loaded from %s", model_path)
 
-    params = replicate(model.params)
+    params = replicate(model.params, devices=jax.local_devices())
     logger.info("Params replicated across %d devices", jax.local_device_count())
 
     def generate(batch, params):
@@ -93,7 +93,7 @@ def load_model(model_path):
             do_sample=False,
         ).sequences
 
-    p_generate = jax.pmap(generate)
+    p_generate = jax.pmap(generate, devices=jax.local_devices())
 
     return params, p_generate
 

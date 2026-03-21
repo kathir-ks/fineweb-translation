@@ -3,7 +3,7 @@
 # Install required packages
 pip install networkx==2.5
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-pip install nltk sacremoses pandas regex mock "transformers>=4.33.2" mosestokenizer
+pip install nltk sacremoses pandas regex mock "transformers>=4.33.2,<5.0" mosestokenizer
 pip install bitsandbytes scipy accelerate datasets
 pip install sentencepiece sacrebleu 
 pip install -U "huggingface_hub[cli]"
@@ -15,6 +15,7 @@ pip install -U "huggingface_hub[cli]"
 
 git clone https://www.github.com/kathir-ks/IndicTransTokenizer
 cd IndicTransTokenizer
-pip install --editable ./
+pip install --no-deps -e ./
+pip install git+https://github.com/VarunGumma/indic_nlp_library
 
 # sudo shutdown -r now

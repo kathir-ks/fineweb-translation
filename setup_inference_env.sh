@@ -3,11 +3,11 @@
 pip install networkx==2.5
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-pip install torch transformers datasets flax nltk
+pip install torch "transformers>=4.33.2,<5.0" datasets flax nltk
 sudo apt-get install golang -y
 pip install jax-smi
 
-pip install sacremoses pandas regex mock "transformers>=4.33.2" mosestokenizer
+pip install sacremoses pandas regex mock mosestokenizer
 pip install bitsandbytes scipy accelerate 
 pip install sentencepiece sacrebleu 
 pip install -U "huggingface_hub[cli]"
@@ -16,7 +16,8 @@ mkdir -p flax_weights
 
 git clone https://www.github.com/kathir-ks/IndicTransTokenizer
 cd IndicTransTokenizer
-pip install --editable ./
+pip install --no-deps -e ./
+pip install git+https://github.com/VarunGumma/indic_nlp_library
 
 # Optional: download model from HuggingFace
 if [ -n "${MODEL_REPO:-}" ]; then

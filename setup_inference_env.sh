@@ -10,7 +10,7 @@ pip install jax-smi
 pip install sacremoses pandas regex mock mosestokenizer
 pip install bitsandbytes scipy accelerate 
 pip install sentencepiece sacrebleu 
-pip install -U "huggingface_hub[cli]"
+pip install "huggingface_hub[cli]<1.0"
 
 mkdir -p flax_weights
 

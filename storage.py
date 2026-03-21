@@ -1,6 +1,5 @@
 """
-Centralised storage helpers for reading/writing JSON to GCS (or any
-fsspec-compatible filesystem).
+Centralised storage helpers for reading/writing JSON to the local filesystem.
 
 All file I/O that previously lived inline in tokenization, inference,
 and decode scripts is now routed through these helpers.
@@ -8,40 +7,42 @@ and decode scripts is now routed through these helpers.
 
 import json
 import logging
+import os
 from typing import Any, Optional
 
-import fsspec
-from fsspec import AbstractFileSystem
-
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Filesystem bootstrap
-# ---------------------------------------------------------------------------
-
-def get_fs(bucket: str) -> AbstractFileSystem:
-    """Return an fsspec filesystem object for *bucket*."""
-    return fsspec.core.url_to_fs(bucket)[0]
 
 
 # ---------------------------------------------------------------------------
 # Generic JSON I/O
 # ---------------------------------------------------------------------------
 
-def write_json(fs: AbstractFileSystem, path: str, data: Any) -> None:
+def write_json(path: str, data: Any) -> None:
     """Serialise *data* as JSON and write it to *path*."""
-    with fs.open(path, 'w') as f:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w') as f:
         json.dump(data, f)
     logger.debug("Wrote %s", path)
 
 
-def read_json(fs: AbstractFileSystem, path: str) -> Any:
+def read_json(path: str) -> Any:
     """Read and deserialise JSON from *path*."""
-    with fs.open(path, 'r') as f:
+    with open(path, 'r') as f:
         data = json.load(f)
     logger.debug("Read %s", path)
     return data
+
+
+# ---------------------------------------------------------------------------
+# Path helpers
+# ---------------------------------------------------------------------------
+
+def shard_path(data_dir: str, name: str, subset: str, node_id: int, kind: str, shard: int) -> str:
+    """Return the local path for a tokenized or output shard.
+
+    *kind* is typically ``"tokenized"`` or ``"output"``.
+    """
+    return os.path.join(data_dir, name, subset, str(node_id), kind, f"{shard}.json")
 
 
 # ---------------------------------------------------------------------------
@@ -49,8 +50,7 @@ def read_json(fs: AbstractFileSystem, path: str) -> Any:
 # ---------------------------------------------------------------------------
 
 def write_tokenized_shard(
-    fs: AbstractFileSystem,
-    bucket: str,
+    data_dir: str,
     name: str,
     subset: str,
     shard: int,
@@ -58,14 +58,13 @@ def write_tokenized_shard(
     data: dict,
 ) -> None:
     """Write a tokenized shard JSON to its node-partitioned path."""
-    path = f'{bucket}/{name}/{subset}/{shard % total_nodes}/tokenized/{shard}.json'
-    write_json(fs, path, data)
+    path = shard_path(data_dir, name, subset, shard % total_nodes, "tokenized", shard)
+    write_json(path, data)
     logger.info("Saved tokenized shard %d -> %s", shard, path)
 
 
 def save_tokenization_checkpoint(
-    fs: AbstractFileSystem,
-    bucket: str,
+    data_dir: str,
     name: str,
     subset: str,
     file_no: int,
@@ -73,21 +72,20 @@ def save_tokenization_checkpoint(
     shard: int,
 ) -> None:
     """Persist a tokenization progress checkpoint."""
-    path = f'{bucket}/{name}/{subset}/tokenization_meta_data_{file_no}.json'
-    write_json(fs, path, {'row': row, 'shard': shard, 'file': file_no})
+    path = os.path.join(data_dir, name, subset, f"tokenization_meta_data_{file_no}.json")
+    write_json(path, {'row': row, 'shard': shard, 'file': file_no})
 
 
 def load_tokenization_checkpoint(
-    fs: AbstractFileSystem,
-    bucket: str,
+    data_dir: str,
     name: str,
     subset: str,
     file_no: int,
 ) -> Optional[dict]:
     """Load a tokenization checkpoint, or return ``None`` if it doesn't exist."""
-    path = f'{bucket}/{name}/{subset}/tokenization_meta_data_{file_no}.json'
-    if fs.exists(path):
-        data = read_json(fs, path)
+    path = os.path.join(data_dir, name, subset, f"tokenization_meta_data_{file_no}.json")
+    if os.path.exists(path):
+        data = read_json(path)
         logger.info("Resuming file %d from row %d, shard %d", file_no, data['row'], data['shard'])
         return data
     return None
@@ -98,19 +96,32 @@ def load_tokenization_checkpoint(
 # ---------------------------------------------------------------------------
 
 def find_shards(
-    fs: AbstractFileSystem,
-    bucket: str,
+    data_dir: str,
     name: str,
     subset: str,
     node_id: int,
 ) -> list[int]:
     """List available tokenized shard indices for a given node."""
+    shard_dir = os.path.join(data_dir, name, subset, str(node_id), "tokenized")
     try:
-        files = fs.ls(f'{bucket}/{name}/{subset}/{node_id}/tokenized')
+        files = os.listdir(shard_dir)
         shards = sorted(
-            int(f.split('.')[-2].split('/')[-1]) for f in files
+            int(f.split('.')[0]) for f in files if f.endswith('.json')
         )
         return shards
     except Exception as exc:
         logger.warning("Could not list shards for node %d: %s", node_id, exc)
         return []
+
+
+# ---------------------------------------------------------------------------
+# Misc helpers
+# ---------------------------------------------------------------------------
+
+def delete_file(path: str) -> None:
+    """Remove a file if it exists."""
+    try:
+        os.remove(path)
+        logger.debug("Deleted %s", path)
+    except FileNotFoundError:
+        pass

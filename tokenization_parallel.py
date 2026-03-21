@@ -2,10 +2,11 @@
 Tokenization pipeline for the fineweb-translation project.
 
 Streams the FineWeb-Edu dataset, splits documents into sentences,
-tokenizes them with IndicTransTokenizer, and writes shards to GCS.
+tokenizes them with IndicTransTokenizer, and writes shards to a local
+directory.
 
 Supports multiprocessing (one process per parquet file) and resume
-via per-file checkpoints on GCS.
+via per-file checkpoints.
 
 Usage example
 -------------
@@ -14,7 +15,7 @@ Usage example
         --subset sample-10BT \
         --src_lang eng_Latn --tgt_lang hin_Deva \
         --tokenization_batch_size 64 \
-        --bucket gs://my-bucket \
+        --data_dir ~/data \
         --shard_size 64000 \
         --total_nodes 4 \
         --total_files 99 \
@@ -23,6 +24,7 @@ Usage example
 
 import argparse
 import logging
+import os
 from multiprocessing import Pool
 
 from datasets import load_dataset
@@ -30,7 +32,6 @@ from IndicTransTokenizer import IndicTransTokenizer, IndicProcessor
 
 from utils import split_into_sentences, preprocess_and_tokenize
 from storage import (
-    get_fs,
     write_tokenized_shard,
     save_tokenization_checkpoint,
     load_tokenization_checkpoint,
@@ -59,8 +60,8 @@ def parse_args():
                         help="Target language code (e.g. hin_Deva)")
     parser.add_argument("--tokenization_batch_size", type=int, required=True,
                         help="Batch size for tokenization")
-    parser.add_argument("--bucket", type=str, required=True,
-                        help="GCS bucket URI to store shards")
+    parser.add_argument("--data_dir", type=str, default="~/data",
+                        help="Local directory to store shards")
     parser.add_argument("--shard_size", type=int, default=64000,
                         help="Number of sentences per shard")
     parser.add_argument("--resume", type=bool, default=False,
@@ -109,13 +110,12 @@ def tokenize_shard(
     tokenization_batch_size,
     name,
     subset,
-    bucket,
+    data_dir,
     shard,
     total_nodes,
-    fs,
     row,
 ):
-    """Tokenize a shard of sentences and write the result to GCS."""
+    """Tokenize a shard of sentences and write the result to disk."""
     tokenized_inputs = []
     ids = []
 
@@ -147,7 +147,7 @@ def tokenize_shard(
         'shard': shard,
         'meta_data': meta_data,
     }
-    write_tokenized_shard(fs, bucket, name, subset, shard, total_nodes, data)
+    write_tokenized_shard(data_dir, name, subset, shard, total_nodes, data)
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +158,7 @@ def process_file(args_tuple):
     """Process a single parquet file: split into sentences, tokenize, shard."""
     (
         name, subset, src_lang, tgt_lang, streaming,
-        tokenization_batch_size, bucket, shard_size,
+        tokenization_batch_size, data_dir, shard_size,
         total_nodes, file_no, total_files, resume,
     ) = args_tuple
 
@@ -171,10 +171,8 @@ def process_file(args_tuple):
     shard = shard_start
     tokenized_rows = 0
 
-    fs = get_fs(bucket)
-
     # --- Resume from checkpoint if available ---
-    checkpoint = load_tokenization_checkpoint(fs, bucket, name, subset, file_no)
+    checkpoint = load_tokenization_checkpoint(data_dir, name, subset, file_no)
     if checkpoint is not None:
         resume = True
         tokenized_rows = checkpoint['row']
@@ -201,7 +199,7 @@ def process_file(args_tuple):
             tokenize_shard(
                 sentences[:shard_size], temp_ids[:shard_size], meta_data,
                 src_lang, tgt_lang, tokenization_batch_size,
-                name, subset, bucket, shard, total_nodes, fs, row,
+                name, subset, data_dir, shard, total_nodes, row,
             )
             sentences = sentences[shard_size:]
             temp_ids = temp_ids[shard_size:]
@@ -216,7 +214,7 @@ def process_file(args_tuple):
         # Periodic checkpoint
         if row % 1000 == 0:
             save_tokenization_checkpoint(
-                fs, bucket, name, subset, file_no, row, shard,
+                data_dir, name, subset, file_no, row, shard,
             )
 
     # Flush remaining sentences
@@ -224,11 +222,11 @@ def process_file(args_tuple):
         tokenize_shard(
             sentences, temp_ids, meta_data,
             src_lang, tgt_lang, tokenization_batch_size,
-            name, subset, bucket, shard, total_nodes, fs, row,
+            name, subset, data_dir, shard, total_nodes, row,
         )
 
     # Final checkpoint
-    save_tokenization_checkpoint(fs, bucket, name, subset, file_no, row, shard)
+    save_tokenization_checkpoint(data_dir, name, subset, file_no, row, shard)
     logger.info("File %d complete — final shard %d, rows %d", file_no, shard, row)
 
 
@@ -237,6 +235,7 @@ def process_file(args_tuple):
 # ---------------------------------------------------------------------------
 
 def main(args):
+    data_dir = os.path.expanduser(args.data_dir)
     start = args.start_file
     end = args.end_file if args.end_file is not None else args.total_files
     num_files = end - start
@@ -245,7 +244,7 @@ def main(args):
         (
             args.name, args.subset, args.src_lang, args.tgt_lang,
             args.streaming, args.tokenization_batch_size,
-            args.bucket, args.shard_size, args.total_nodes,
+            data_dir, args.shard_size, args.total_nodes,
             i, args.total_files, args.resume,
         )
         for i in range(start, end)

@@ -1,8 +1,9 @@
 """
 Inference pipeline for fineweb-translation.
 
-Loads tokenized shards from GCS, runs the IndicTrans2 Flax model on TPUs
-via JAX pmap, decodes the output, and writes translated sentences back to GCS.
+Loads tokenized shards from the local filesystem, runs the IndicTrans2 Flax
+model on TPUs via JAX pmap, decodes the output, and writes translated
+sentences back to disk.
 
 Supports multihost TPU setups (e.g. v4-256) via jax.distributed.initialize().
 """
@@ -24,7 +25,7 @@ from jax_smi import initialise_tracking
 from modeling_flax_indictrans import FlaxIndicTransForConditionalGeneration
 from IndicTransTokenizer import IndicTransTokenizer, IndicProcessor
 from decode import decode, merge
-from storage import get_fs, read_json, write_json, find_shards
+from storage import read_json, write_json, find_shards, shard_path, delete_file
 
 logger = logging.getLogger(__name__)
 
@@ -192,13 +193,14 @@ def run_inference(p_generate, params, data, batch_size):
 # Per-node processing loop
 # ---------------------------------------------------------------------------
 
-def process_shards(shards, fs, p_generate, params, bucket, name, subset, node_id, batch_size, lang):
+def process_shards(shards, p_generate, params, data_dir, name, subset, node_id, batch_size, lang):
     """Run inference on each shard, decode, and save output."""
     ip = IndicProcessor(inference=True)
     tokenizer = IndicTransTokenizer(direction='en-indic')
 
     for shard_id in shards:
-        data = read_json(fs, f'{bucket}/{name}/{subset}/{node_id}/tokenized/{shard_id}.json')
+        tok_path = shard_path(data_dir, name, subset, node_id, "tokenized", shard_id)
+        data = read_json(tok_path)
 
         output = run_inference(p_generate, params, data, batch_size)
         sentences = decode(output, ip, tokenizer, lang)
@@ -207,8 +209,9 @@ def process_shards(shards, fs, p_generate, params, bucket, name, subset, node_id
             sentences['meta_data'], sentences['row'], sentences['shard'],
         )
 
-        write_json(fs, f'{bucket}/{name}/{subset}/{node_id}/output/{shard_id}.json', sentences)
-        fs.rm(f'{bucket}/{name}/{subset}/{node_id}/tokenized/{shard_id}.json')
+        out_path = shard_path(data_dir, name, subset, node_id, "output", shard_id)
+        write_json(out_path, sentences)
+        delete_file(tok_path)
 
         del data, sentences
 
@@ -222,7 +225,12 @@ if __name__ == '__main__':
     parser.add_argument("--name", type=str, required=True)
     parser.add_argument("--subset", type=str, required=True)
     parser.add_argument("--batch_size", type=int, default=256)
-    parser.add_argument("--bucket", type=str, required=True)
+    parser.add_argument("--data_dir", type=str, default="~/data",
+                        help="Local directory for tokenized/output data")
+    parser.add_argument("--model_path", type=str, default="./flax_weights/200m",
+                        help="Local path to model weights")
+    parser.add_argument("--model_repo", type=str, default=None,
+                        help="HuggingFace repo to download model from (optional)")
     parser.add_argument("--node_id", type=int, default=-1)
     parser.add_argument("--total_nodes", type=int, default=-1)
     parser.add_argument("--lang", type=str, required=True)
@@ -235,16 +243,20 @@ if __name__ == '__main__':
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    fs = get_fs(args.bucket)
+    data_dir = os.path.expanduser(args.data_dir)
     pid = jax.process_index()
     logger.info("JAX process index: %d", pid)
 
-    curr_dir = os.getcwd()
-    model_path = f'{curr_dir}/flax_weights/200m'
+    model_path = os.path.expanduser(args.model_path)
 
     if not os.path.isdir(model_path):
-        os.makedirs('flax_weights', exist_ok=True)
-        os.system(f'gsutil cp -R {args.bucket}/IndicTrans2/flax_weights/200m {curr_dir}/flax_weights/')
+        if args.model_repo:
+            from huggingface_hub import snapshot_download
+            os.makedirs(model_path, exist_ok=True)
+            snapshot_download(repo_id=args.model_repo, local_dir=model_path)
+        else:
+            logger.error("Model not found at %s and --model_repo not set", model_path)
+            raise SystemExit(1)
 
     # Load model and create pmap'd generate — once for all shards
     params, p_generate = load_model(model_path)
@@ -252,15 +264,15 @@ if __name__ == '__main__':
     node_id = args.node_id if args.node_id != -1 else pid
     total_nodes = args.total_nodes if args.total_nodes != -1 else jax.process_count()
 
-    shard_list = find_shards(fs, args.bucket, args.name, args.subset, node_id)
+    shard_list = find_shards(data_dir, args.name, args.subset, node_id)
 
     while shard_list:
         logger.info("Processing shards: %s", shard_list)
         process_shards(
-            shard_list, fs, p_generate, params, args.bucket,
+            shard_list, p_generate, params, data_dir,
             args.name, args.subset, node_id, args.batch_size, args.lang,
         )
 
         # Check for newly arrived shards
-        new_shards = find_shards(fs, args.bucket, args.name, args.subset, node_id)
+        new_shards = find_shards(data_dir, args.name, args.subset, node_id)
         shard_list = [s for s in new_shards if s not in shard_list]

@@ -1,10 +1,10 @@
 #!/bin/bash
 #
-# Tokenization launcher for TPU VMs.
+# Tokenization launcher for TPU VMs (standalone, local storage).
 #
 # Usage:
-#   ./run_tokenization.sh --vm_name tpu-tok-0 --region us-central2-b \
-#       --accelerator_type v4-8 --bucket gs://my-bucket \
+#   ./run_tokenization.sh --vm_name tpu-tok-0 --zone us-central2-b \
+#       --accelerator_type v4-8 --data_dir ~/data \
 #       --dataset HuggingFaceFW/fineweb-edu --subset sample-10BT \
 #       --src_lang eng_Latn --tgt_lang hin_Deva \
 #       --tokenization_batch_size 64 --shard_size 64000 \
@@ -14,14 +14,15 @@
 set -euo pipefail
 
 preemptible=true
+data_dir="~/data"
 
 # Argument parsing
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --vm_name) vm_name="$2"; shift ;;
-        --region) region="$2"; shift ;;
+        --zone) zone="$2"; shift ;;
         --accelerator_type) accelerator_type="$2"; shift ;;
-        --bucket) bucket="$2"; shift ;;
+        --data_dir) data_dir="$2"; shift ;;
         --dataset) dataset="$2"; shift ;;
         --subset) subset="$2"; shift ;;
         --src_lang) src_lang="$2"; shift ;;
@@ -39,7 +40,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Validate required args
-for var in vm_name region accelerator_type bucket dataset subset src_lang tgt_lang tokenization_batch_size shard_size total_nodes total_files; do
+for var in vm_name zone accelerator_type dataset subset src_lang tgt_lang tokenization_batch_size shard_size total_nodes total_files; do
     if [ -z "${!var:-}" ]; then
         echo "Error: --$var is required"
         exit 1
@@ -53,11 +54,11 @@ fi
 
 setup_vm() {
     echo "Creating TPU VM '$vm_name'..."
-    gcloud compute tpus tpu-vm create "$vm_name" --zone="$region" $create_flags
+    gcloud compute tpus tpu-vm create "$vm_name" --zone="$zone" $create_flags
     sleep 10
 
     echo "Setting up environment..."
-    gcloud compute tpus tpu-vm ssh "$vm_name" --zone="$region" --command='
+    gcloud compute tpus tpu-vm ssh "$vm_name" --zone="$zone" --command='
         git clone https://github.com/kathir-ks/fineweb-translation
         cd fineweb-translation
         chmod +x setup_tokenization_env.sh
@@ -67,7 +68,7 @@ setup_vm() {
 
 # Main loop — handles preemption
 while true; do
-    output=$(gcloud compute tpus tpu-vm describe "$vm_name" --zone="$region" 2>&1 || true)
+    output=$(gcloud compute tpus tpu-vm describe "$vm_name" --zone="$zone" 2>&1 || true)
 
     if [[ $output != *"READY"* ]]; then
         if ! setup_vm; then
@@ -82,7 +83,7 @@ while true; do
             --name $dataset --subset $subset \
             --src_lang $src_lang --tgt_lang $tgt_lang \
             --tokenization_batch_size $tokenization_batch_size \
-            --bucket $bucket --shard_size $shard_size \
+            --data_dir $data_dir --shard_size $shard_size \
             --resume True --total_nodes $total_nodes \
             --total_files $total_files"
     if [ -n "${start_file:-}" ]; then
@@ -92,7 +93,7 @@ while true; do
         tok_cmd="$tok_cmd --end_file $end_file"
     fi
 
-    if gcloud compute tpus tpu-vm ssh "$vm_name" --zone="$region" --command="$tok_cmd"; then
+    if gcloud compute tpus tpu-vm ssh "$vm_name" --zone="$zone" --command="$tok_cmd"; then
         echo "Tokenization completed successfully"
         break
     else

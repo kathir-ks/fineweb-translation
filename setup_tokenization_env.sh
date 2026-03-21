@@ -6,7 +6,6 @@ pip3 install torch torchvision torchaudio --index-url https://download.pytorch.o
 pip install nltk sacremoses pandas regex mock "transformers>=4.33.2" mosestokenizer
 pip install bitsandbytes scipy accelerate datasets
 pip install sentencepiece sacrebleu 
-pip install fsspec gcsfs
 pip install -U "huggingface_hub[cli]"
 
 # Install IndicTransTokenizer

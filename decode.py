@@ -7,13 +7,13 @@ that share the same document UUID.
 """
 
 import argparse
-import json
 import logging
+import os
 
 import numpy as np
 
 from IndicTransTokenizer import IndicTransTokenizer, IndicProcessor
-from storage import get_fs, read_json, write_json
+from storage import read_json, write_json
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,8 @@ if __name__ == '__main__':
     parser.add_argument("--direction", type=str, default='en-indic',
                         help="IndicTransTokenizer direction")
     parser.add_argument("--lang", type=str, required=True, help="Target language code")
-    parser.add_argument("--bucket", type=str, required=True, help="GCS bucket URI")
+    parser.add_argument("--data_dir", type=str, default="~/data",
+                        help="Local directory for data")
     parser.add_argument("--resume", type=bool, default=False)
     parser.add_argument("--_from", type=int, required=True, help="Start shard index")
     parser.add_argument("--to", type=int, required=True, help="End shard index")
@@ -102,8 +103,9 @@ if __name__ == '__main__':
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    fs = get_fs(args.bucket)
-    files = fs.ls(f'{args.bucket}/{args.name}/{args.subset}')
+    data_dir = os.path.expanduser(args.data_dir)
+    base_dir = os.path.join(data_dir, args.name, args.subset)
+    files = [f for f in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, f))]
     total_shards = len(files)
 
     curr_shard = 1
@@ -111,7 +113,8 @@ if __name__ == '__main__':
         left, right = curr_shard, total_shards
         while left <= right:
             mid = left + (right - left) // 2
-            if fs.isfile(f'{args.bucket}/{args.name}/{args.subset}/{mid}/sentences.json'):
+            sent_path = os.path.join(base_dir, str(mid), "sentences.json")
+            if os.path.isfile(sent_path):
                 left = mid + 1
             else:
                 right = mid - 1
@@ -126,7 +129,8 @@ if __name__ == '__main__':
 
     for i in range(args._from, end + 1):
         try:
-            output = read_json(fs, f'{args.bucket}/{args.name}/{args.subset}/{i}/output.json')
+            output_path = os.path.join(base_dir, str(i), "output.json")
+            output = read_json(output_path)
             if not output:
                 continue
 
@@ -136,8 +140,8 @@ if __name__ == '__main__':
                 sentences['meta_data'], sentences['row'], sentences['shard'],
             )
 
-            write_json(fs, f'{args.bucket}/{args.name}/{args.subset}/{i}/sentences.json', sentences)
-            write_json(fs, f'{args.bucket}/{args.name}/{args.subset}/{i}/output.json', [])
+            write_json(os.path.join(base_dir, str(i), "sentences.json"), sentences)
+            write_json(output_path, [])
 
         except Exception as exc:
             logger.error("Failed to decode shard %d: %s", i, exc)
